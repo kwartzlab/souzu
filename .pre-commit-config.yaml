@@ -1,0 +1,35 @@
+---
+default_install_hook_types: [pre-commit, post-checkout]
+default_stages: [pre-commit, pre-push, manual]
+repos:
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.5.29
+    hooks:
+      - id: uv-lock
+        require_serial: true
+  - repo: local
+    hooks:
+      - id: yamllint
+        name: yamllint
+        entry: uv run yamllint
+        language: system
+        types_or: [yaml]
+        require_serial: true
+      - id: ruff-format
+        name: ruff-format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+        fail_fast: true
+  - repo: https://github.com/wlritchi/pre-commit-via-uv
+    rev: 1.0.0
+    hooks:
+      - id: mypy-all-files
+      - id: pyright-all-files

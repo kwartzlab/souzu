@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+REPO_DIR="$(git rev-parse --show-toplevel)"
+HOOK_TYPE="$(basename "$0")"
+HOOK_DIR="$(dirname "$(realpath "$0")")"
+
+exec uv run pre-commit hook-impl --config .pre-commit-config.yaml --hook-type "$HOOK_TYPE" --hook-dir "$HOOK_DIR" -- "$@"
