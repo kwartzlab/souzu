@@ -6,6 +6,7 @@ authors = [
 ]
 requires-python = ">=3.12,<4.0"
 dependencies = [
+    "aiomqtt>=2.3.0,<3.0.0",
 ]
 dynamic = ["version"]
 
