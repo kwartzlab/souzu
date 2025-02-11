@@ -14,6 +14,7 @@ BAMBU_DISCOVERY_PORT = 2021
 @frozen
 class BambuDevice:
     device_id: str
+    device_name: str
     ip_address: str
 
 
@@ -23,28 +24,24 @@ async def discover_bambu_devices(discovered_device_queue: Queue[BambuDevice]) ->
         def response_received(  # type: ignore[misc]
             self, response: SSDPResponse, addr: tuple[str | Any, int]
         ) -> None:
-            headers = CaseInsensitiveDict[str](response.headers)
-            if headers.get("NT") == "urn:bambulab-com:device:3dprinter:1":
-                ip_address = headers.get("Location")
-                serial_number = headers.get("USN")
-                if ip_address and serial_number:
-                    device = BambuDevice(
-                        device_id=serial_number,
-                        ip_address=ip_address,
-                    )
-                    discovered_device_queue.put_nowait(device)
+            self.handle_headers(response.headers)
 
         @override
         def request_received(  # type: ignore[misc]
             self, request: SSDPRequest, addr: tuple[str | Any, int]
         ) -> None:
-            headers = CaseInsensitiveDict[str](request.headers)
+            self.handle_headers(request.headers)
+
+        def handle_headers(self, header_list: list[tuple[str, str]]) -> None:
+            headers = CaseInsensitiveDict[str](header_list)
             if headers.get("NT") == "urn:bambulab-com:device:3dprinter:1":
                 ip_address = headers.get("Location")
                 serial_number = headers.get("USN")
+                device_name = headers.get("DevName.bambu.com")
                 if ip_address and serial_number:
                     device = BambuDevice(
                         device_id=serial_number,
+                        device_name=device_name or serial_number,
                         ip_address=ip_address,
                     )
                     discovered_device_queue.put_nowait(device)

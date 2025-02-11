@@ -34,7 +34,7 @@ async def inner_loop() -> None:
         tg.create_task(discover_bambu_devices(queue))
         while True:
             device = await queue.get()
-            print(f"Found device {device.device_id} at {device.ip_address}")  # noqa: T201
+            print(f"Found device {device.device_name} at {device.ip_address}")  # noqa: T201
             tg.create_task(print_messages(device.ip_address, device.device_id))
 
 
