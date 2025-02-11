@@ -4,6 +4,7 @@ from asyncio import (
     FIRST_COMPLETED,
     CancelledError,
     Event,
+    TaskGroup,
     create_task,
     get_running_loop,
     run,
@@ -22,19 +23,26 @@ async def print_messages(subscription: BambuMqttSubscription) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("host", help="The IP address of the printer")
-    parser.add_argument("device_id", help="The serial number of the printer")
-    parser.add_argument("access_code", help="The LAN access code for the printer")
-    return parser.parse_args()
+    parser.add_argument(
+        "--device",
+        nargs=3,
+        dest="devices",
+        action="append",
+        metavar=("host", "device_id", "access_code"),
+        help="Device configuration tuple: host, device_id, access_code",
+    )
+    args = parser.parse_args()
+    return args
 
 
 async def inner_loop() -> None:
     args = _parse_args()
-    async with AsyncExitStack() as stack:
-        subscription = await stack.enter_async_context(
-            BambuMqttSubscription(args.host, args.device_id, args.access_code)
-        )
-        await print_messages(subscription)
+    async with AsyncExitStack() as stack, TaskGroup() as tg:
+        for host, device_id, access_code in args.devices:
+            subscription = await stack.enter_async_context(
+                BambuMqttSubscription(host, device_id, access_code)
+            )
+            tg.create_task(print_messages(subscription))
 
 
 async def real_main() -> None:
