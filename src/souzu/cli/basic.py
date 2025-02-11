@@ -10,15 +10,15 @@ from asyncio import (
     run,
     wait,
 )
-from contextlib import AsyncExitStack
 from types import FrameType
 
 from souzu.bambu.mqtt import BambuMqttSubscription
 
 
-async def print_messages(subscription: BambuMqttSubscription) -> None:
-    async for message in subscription.messages:
-        print(message.__dict__)  # noqa: T201
+async def print_messages(host: str, device_id: str, access_code: str) -> None:
+    async with BambuMqttSubscription(host, device_id, access_code) as subscription:
+        async for message in subscription.messages:
+            print(message.__dict__)  # noqa: T201
 
 
 def _parse_args() -> argparse.Namespace:
@@ -37,12 +37,9 @@ def _parse_args() -> argparse.Namespace:
 
 async def inner_loop() -> None:
     args = _parse_args()
-    async with AsyncExitStack() as stack, TaskGroup() as tg:
+    async with TaskGroup() as tg:
         for host, device_id, access_code in args.devices:
-            subscription = await stack.enter_async_context(
-                BambuMqttSubscription(host, device_id, access_code)
-            )
-            tg.create_task(print_messages(subscription))
+            tg.create_task(print_messages(host, device_id, access_code))
 
 
 async def real_main() -> None:
