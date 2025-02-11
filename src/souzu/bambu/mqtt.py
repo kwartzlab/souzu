@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from asyncio import Queue, QueueFull, Task, TaskGroup
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+)
 from importlib import resources
 from pathlib import Path
 from socket import socket
@@ -19,6 +24,8 @@ from deepmerge.merger import Merger
 from deepmerge.strategy.core import STRATEGY_END
 
 from souzu.bambu import res
+from souzu.bambu.discovery import BambuDevice
+from souzu.config import BAMBU_ACCESS_CODES
 
 # see more fields at https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md
 
@@ -54,7 +61,7 @@ class BambuAmsSummary:
 @frozen
 class BambuLightReport:
     node: str | None = None
-    mode: str | None = None  # "on", "flashing", probably "off"
+    mode: str | None = None  # "on", "flashing", "off"
 
 
 @frozen
@@ -85,15 +92,17 @@ class BambuStatusReport:
     gcode_file: str | None = None
     gcode_file_prepare_percent: int | None = None
     gcode_start_time: int | None = None
-    gcode_state: str | None = None
+    gcode_state: str | None = (
+        None  # unreliable, this sometimes goes to "FAILED" before print start
+    )
     heatbreak_fan_speed: int | None = None
     layer_num: int | None = None
     lights_report: list[BambuLightReport] = Factory(list)
     mc_percent: int | None = None
     mc_print_error_code: str | None = None
-    mc_print_stage: int | None = None
+    mc_print_stage: int | None = None  # 1: not printing, 2: printing
     mc_print_sub_stage: int | None = None
-    mc_remaining_time: int | None = None
+    mc_remaining_time: int | None = None  # in minutes
     nozzle_target_temper: float | None = None
     nozzle_temper: float | None = None
     print_error: int | None = None
@@ -167,16 +176,23 @@ class _SniSslContext(SSLContext):
 
 
 class BambuMqttSubscription(AbstractAsyncContextManager):
-    def __init__(self, ip: str, device_id: str, access_code: str) -> None:
-        self.ip = ip
-        self.device_id = device_id
-        self.access_code = access_code
+    def __init__(self, task_group: TaskGroup, device: BambuDevice) -> None:
+        self.task_group = task_group
+        self.ip = device.ip_address
+        self.device_id = device.device_id
+        self.access_code = BAMBU_ACCESS_CODES.get(device.device_id)
+        if not self.access_code:
+            raise ValueError(f"No access code for device {device.device_id}")
+
         self._entered = False
         self._client: Client | None = None
         self._ca_path_ctx: AbstractContextManager[Path] | None = None
         self._ca_path: Path | None = None
+        self._consume_task: Task | None = None
 
         self._status: _BambuWrapper = _BambuWrapper(BambuStatusReport())
+
+        self._queues = list[Queue[tuple[BambuStatusReport, BambuStatusReport]]]()
 
     @override
     async def __aenter__(self) -> Self:
@@ -204,6 +220,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
 
         await self._client.__aenter__()
         await self._client.subscribe(f"device/{self.device_id}/report")
+        self._consume_task = self.task_group.create_task(self._consume_messages())
 
         self._entered = True
         return self
@@ -215,8 +232,13 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self._client is None or self._ca_path_ctx is None:
+        if (
+            self._client is None
+            or self._ca_path_ctx is None
+            or self._consume_task is None
+        ):
             raise RuntimeError("MQTT subscription not initialized or already closed")
+        self._consume_task.cancel()
         try:
             await self._client.__aexit__(exc_type, exc, tb)
         finally:
@@ -225,10 +247,29 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
             finally:
                 self._client = None
 
-    @property
-    async def messages(
+    @asynccontextmanager
+    async def subscribe(
         self,
-    ) -> AsyncIterator[tuple[BambuStatusReport, BambuStatusReport]]:
+    ) -> AsyncGenerator[
+        AsyncIterator[tuple[BambuStatusReport, BambuStatusReport]], None
+    ]:
+        """
+        Create an in-memory subscription to the MQTT topic.
+
+        Note that this does not correspond to a subscription with the MQTT
+        broker on the printer. Instead, this class maintains a single MQTT
+        subscription, and passes events to queues for each individual
+        subscription.
+        """
+
+        queue = Queue[tuple[BambuStatusReport, BambuStatusReport]]()
+        self._queues.append(queue)
+        try:
+            yield _consume_queue(queue)
+        finally:
+            self._queues.remove(queue)
+
+    async def _consume_messages(self) -> None:
         if self._client is None:
             raise RuntimeError("MQTT subscription not initialized")
         async for message in self._client.messages:
@@ -236,7 +277,11 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
             if wrapper is not None:
                 old = self._status
                 self._status = wrapper
-                yield old.print, wrapper.print
+                for queue in self._queues:
+                    try:
+                        queue.put_nowait((old.print, wrapper.print))
+                    except QueueFull:
+                        logging.warning("Dropping message due to full queue")
 
     def _parse_payload(self, payload: PayloadType) -> _BambuWrapper | None:
         try:
@@ -253,3 +298,11 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         except Exception as e:
             logging.exception(f"Error parsing message: {e}", extra={"payload": payload})
             return None
+
+
+async def _consume_queue[_T](
+    queue: Queue[_T],
+) -> AsyncIterator[_T]:
+    while True:
+        yield await queue.get()
+        queue.task_done()

@@ -11,35 +11,72 @@ from asyncio import (
     run,
     wait,
 )
+from contextlib import AsyncExitStack
 from types import FrameType
 
 from prettyprinter import install_extras, pformat
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttSubscription
-from souzu.config import BAMBU_ACCESS_CODES
 
 
-async def print_messages(host: str, device_id: str, device_name: str) -> None:
-    access_code = BAMBU_ACCESS_CODES.get(device_id)
-    if not access_code:
-        logging.error(f"No access code for device {device_id}")
-        return
-    async with BambuMqttSubscription(host, device_id, access_code) as subscription:
-        async for _before, after in subscription.messages:
-            logging.info(f"{device_name}: {pformat(after)}")
+async def log_messages(
+    device: BambuDevice, subscription: BambuMqttSubscription
+) -> None:
+    async with subscription.subscribe() as messages:
+        async for _before, after in messages:
+            logging.debug(f"{device.device_name}: {pformat(after)}")
+
+
+async def log_print_started(
+    device: BambuDevice, subscription: BambuMqttSubscription
+) -> None:
+    running_state: bool | None = None
+    async with subscription.subscribe() as messages:
+        async for _before, after in messages:
+            print_running = (
+                after.mc_print_stage == 2
+                or after.layer_num
+                or after.mc_percent
+                or after.mc_remaining_time
+            )
+            if print_running:
+                if running_state is None:
+                    if after.mc_remaining_time is not None:
+                        logging.info(
+                            f"{device.device_name}: Print already running, {after.mc_remaining_time} minutes remaining"
+                        )
+                    else:
+                        logging.info(f"{device.device_name}: Print already running")
+                elif running_state is False:
+                    logging.info(
+                        f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining"
+                    )
+                running_state = True
+            elif after.mc_print_stage == 1:
+                # definitely not running
+                if running_state:
+                    logging.info(f"{device.device_name}: Print stopped")
+                running_state = False
 
 
 async def inner_loop() -> None:
-    async with TaskGroup() as tg:
-        queue = Queue[BambuDevice]()
+    queue = Queue[BambuDevice]()
+    async with TaskGroup() as tg, AsyncExitStack() as stack:
         tg.create_task(discover_bambu_devices(queue))
         while True:
             device = await queue.get()
             logging.info(f"Found device {device.device_name} at {device.ip_address}")
-            tg.create_task(
-                print_messages(device.ip_address, device.device_id, device.device_name)
-            )
+            try:
+                subscription = BambuMqttSubscription(tg, device)
+                await stack.enter_async_context(subscription)
+                tg.create_task(log_messages(device, subscription))
+                tg.create_task(log_print_started(device, subscription))
+            except Exception:
+                logging.exception(
+                    f"Failed to set up subscription for {device.device_name}"
+                )
+            queue.task_done()
 
 
 async def real_main() -> None:
