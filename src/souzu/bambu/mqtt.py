@@ -15,7 +15,8 @@ from aiomqtt import Client, TLSParameters
 from aiomqtt.types import PayloadType
 from attrs import Factory, frozen
 from cattrs import structure, unstructure
-from deepmerge import always_merger
+from deepmerge.merger import Merger
+from deepmerge.strategy.core import STRATEGY_END
 
 from souzu.bambu import res
 
@@ -109,6 +110,28 @@ class BambuStatusReport:
 @frozen
 class _BambuWrapper:
     print: BambuStatusReport
+
+
+def _replace_nonempty[_T](
+    config: Merger, path: list[str], base: _T, nxt: _T
+) -> _T | object:
+    if isinstance(nxt, list):
+        if nxt:
+            return nxt
+        else:
+            return base
+    return STRATEGY_END
+
+
+_MERGER = Merger(
+    [
+        (list, _replace_nonempty),
+        (dict, "merge"),
+        (set, "union"),
+    ],
+    ["override"],
+    ["override"],
+)
 
 
 class _SniSslContext(SSLContext):
@@ -225,7 +248,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
                 raise ValueError(f"Invalid message data type: {type(payload)}")
             new_dict = json.loads(payload_str)
             old_dict = unstructure(self._status)
-            merged = always_merger.merge(old_dict, new_dict)
+            merged = _MERGER.merge(old_dict, new_dict)
             return structure(merged, _BambuWrapper)
         except Exception as e:
             logging.exception(f"Error parsing message: {e}", extra={"payload": payload})
