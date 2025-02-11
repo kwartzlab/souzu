@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import socket
 from asyncio import Queue, get_running_loop
+from datetime import timedelta
 from typing import Any, override
 
 from attrs import frozen
@@ -18,7 +20,9 @@ class BambuDevice:
     ip_address: str
 
 
-async def discover_bambu_devices(discovered_device_queue: Queue[BambuDevice]) -> None:
+async def discover_bambu_devices(
+    discovered_device_queue: Queue[BambuDevice], max_time: timedelta | None = None
+) -> None:
     found_ids: set[str] = set()
 
     class BambuDiscovery(SimpleServiceDiscoveryProtocol):
@@ -52,9 +56,16 @@ async def discover_bambu_devices(discovered_device_queue: Queue[BambuDevice]) ->
                     found_ids.add(serial_number)
 
     loop = get_running_loop()
-    await loop.create_datagram_endpoint(
+    transport, protocol = await loop.create_datagram_endpoint(
         lambda: BambuDiscovery(),
         local_addr=("0.0.0.0", BAMBU_DISCOVERY_PORT),  # noqa: S104
         family=socket.AF_INET,
+        reuse_port=hasattr(socket, 'SO_REUSEPORT') or None,  # share port, if supported
     )
     logging.info("Discovery started")
+    if max_time is not None:
+        try:
+            await asyncio.sleep(max_time.total_seconds())
+        finally:
+            transport.close()
+            logging.info(f"Discovery stopped after {max_time}")

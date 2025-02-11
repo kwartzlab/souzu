@@ -13,6 +13,7 @@ from asyncio import (
     wait,
 )
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from types import FrameType
 
 from prettyprinter import install_extras, pformat
@@ -64,7 +65,7 @@ async def log_print_started(
 async def inner_loop() -> None:
     queue = Queue[BambuDevice]()
     async with TaskGroup() as tg, AsyncExitStack() as stack:
-        tg.create_task(discover_bambu_devices(queue))
+        tg.create_task(discover_bambu_devices(queue, max_time=timedelta(minutes=1)))
         while True:
             device = await queue.get()
             logging.info(f"Found device {device.device_name} at {device.ip_address}")
