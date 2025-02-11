@@ -1,4 +1,5 @@
 import argparse
+import logging
 import signal
 from asyncio import (
     FIRST_COMPLETED,
@@ -13,9 +14,14 @@ from asyncio import (
 from types import FrameType
 
 from souzu.bambu.mqtt import BambuMqttSubscription
+from souzu.config import BAMBU_ACCESS_CODES
 
 
-async def print_messages(host: str, device_id: str, access_code: str) -> None:
+async def print_messages(host: str, device_id: str) -> None:
+    access_code = BAMBU_ACCESS_CODES.get(device_id)
+    if not access_code:
+        logging.error(f"No access code for device {device_id}")
+        return
     async with BambuMqttSubscription(host, device_id, access_code) as subscription:
         async for message in subscription.messages:
             print(message.__dict__)  # noqa: T201
@@ -25,11 +31,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--device",
-        nargs=3,
+        nargs=2,
         dest="devices",
         action="append",
-        metavar=("host", "device_id", "access_code"),
-        help="Device configuration tuple: host, device_id, access_code",
+        metavar=("host", "device_id"),
+        help="Device configuration tuple: host, device_id",
     )
     args = parser.parse_args()
     return args
@@ -38,8 +44,8 @@ def _parse_args() -> argparse.Namespace:
 async def inner_loop() -> None:
     args = _parse_args()
     async with TaskGroup() as tg:
-        for host, device_id, access_code in args.devices:
-            tg.create_task(print_messages(host, device_id, access_code))
+        for host, device_id in args.devices:
+            tg.create_task(print_messages(host, device_id))
 
 
 async def real_main() -> None:
