@@ -19,6 +19,8 @@ class BambuDevice:
 
 
 async def discover_bambu_devices(discovered_device_queue: Queue[BambuDevice]) -> None:
+    found_ids: set[str] = set()
+
     class BambuDiscovery(SimpleServiceDiscoveryProtocol):
         @override
         def response_received(  # type: ignore[misc]
@@ -38,6 +40,8 @@ async def discover_bambu_devices(discovered_device_queue: Queue[BambuDevice]) ->
                 ip_address = headers.get("Location")
                 serial_number = headers.get("USN")
                 device_name = headers.get("DevName.bambu.com")
+                if serial_number in found_ids:
+                    return
                 if ip_address and serial_number:
                     device = BambuDevice(
                         device_id=serial_number,
@@ -45,6 +49,7 @@ async def discover_bambu_devices(discovered_device_queue: Queue[BambuDevice]) ->
                         ip_address=ip_address,
                     )
                     discovered_device_queue.put_nowait(device)
+                    found_ids.add(serial_number)
 
     loop = get_running_loop()
     await loop.create_datagram_endpoint(
