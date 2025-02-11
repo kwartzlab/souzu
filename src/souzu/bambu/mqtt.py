@@ -19,6 +19,8 @@ from deepmerge import always_merger
 
 from souzu.bambu import res
 
+# see more fields at https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md
+
 
 @frozen
 class BambuAmsSlot:
@@ -86,6 +88,11 @@ class BambuStatusReport:
     heatbreak_fan_speed: int | None = None
     layer_num: int | None = None
     lights_report: list[BambuLightReport] = Factory(list)
+    mc_percent: int | None = None
+    mc_print_error_code: str | None = None
+    mc_print_stage: int | None = None
+    mc_print_sub_stage: int | None = None
+    mc_remaining_time: int | None = None
     nozzle_target_temper: float | None = None
     nozzle_temper: float | None = None
     print_error: int | None = None
@@ -196,14 +203,17 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
                 self._client = None
 
     @property
-    async def messages(self) -> AsyncIterator[BambuStatusReport]:
+    async def messages(
+        self,
+    ) -> AsyncIterator[tuple[BambuStatusReport, BambuStatusReport]]:
         if self._client is None:
             raise RuntimeError("MQTT subscription not initialized")
         async for message in self._client.messages:
             wrapper = self._parse_payload(message.payload)
             if wrapper is not None:
+                old = self._status
                 self._status = wrapper
-                yield wrapper.print
+                yield old.print, wrapper.print
 
     def _parse_payload(self, payload: PayloadType) -> _BambuWrapper | None:
         try:

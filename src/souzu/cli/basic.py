@@ -26,8 +26,8 @@ async def print_messages(host: str, device_id: str, device_name: str) -> None:
         logging.error(f"No access code for device {device_id}")
         return
     async with BambuMqttSubscription(host, device_id, access_code) as subscription:
-        async for message in subscription.messages:
-            logging.info(f"{device_name}: {pformat(message)}")
+        async for _before, after in subscription.messages:
+            logging.info(f"{device_name}: {pformat(after)}")
 
 
 async def inner_loop() -> None:
