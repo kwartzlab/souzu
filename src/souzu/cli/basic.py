@@ -19,7 +19,7 @@ from types import FrameType
 from prettyprinter import install_extras, pformat
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
-from souzu.bambu.mqtt import BambuMqttSubscription
+from souzu.bambu.mqtt import BambuMqttSubscription, BambuStatusReport
 from souzu.slack.thread import post_to_channel
 
 
@@ -31,33 +31,34 @@ async def log_messages(
             logging.debug(f"{device.device_name}: {pformat(after)}")
 
 
+def is_printing(state: BambuStatusReport) -> bool:
+    return state.mc_print_stage == 2
+
+
 async def log_print_started(
-    device: BambuDevice, subscription: BambuMqttSubscription
+    device: BambuDevice, subscription: BambuMqttSubscription, slack_channel: str | None
 ) -> None:
-    running_state: bool | None = None
     async with subscription.subscribe() as messages:
-        async for _before, after in messages:
-            print_running = after.mc_print_stage == 2
-            if print_running:
-                if running_state is None:
-                    if after.mc_remaining_time is not None:
-                        logging.info(
-                            f"{device.device_name}: Print already running, {after.mc_remaining_time} minutes remaining"
-                        )
-                    else:
-                        logging.info(f"{device.device_name}: Print already running")
-                elif running_state is False:
-                    logging.info(
-                        f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining"
+        async for before, after in messages:
+            if is_printing(after) and not is_printing(before):
+                logging.info(
+                    f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining"
+                )
+                if slack_channel is not None:
+                    await post_to_channel(
+                        slack_channel,
+                        f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining",
                     )
-                running_state = True
-            else:
-                if running_state:
-                    logging.info(f"{device.device_name}: Print stopped")
-                running_state = False
+            elif not is_printing(after) and is_printing(before):
+                logging.info(f"{device.device_name}: Print stopped")
+                if slack_channel is not None:
+                    await post_to_channel(
+                        slack_channel,
+                        f"{device.device_name}: Print stopped",
+                    )
 
 
-async def inner_loop() -> None:
+async def inner_loop(slack_channel: str | None) -> None:
     queue = Queue[BambuDevice]()
     async with TaskGroup() as tg, AsyncExitStack() as stack:
         tg.create_task(discover_bambu_devices(queue, max_time=timedelta(minutes=1)))
@@ -68,7 +69,7 @@ async def inner_loop() -> None:
                 subscription = BambuMqttSubscription(tg, device)
                 await stack.enter_async_context(subscription)
                 tg.create_task(log_messages(device, subscription))
-                tg.create_task(log_print_started(device, subscription))
+                tg.create_task(log_print_started(device, subscription, slack_channel))
             except Exception:
                 logging.exception(
                     f"Failed to set up subscription for {device.device_name}"
@@ -87,8 +88,6 @@ def _parse_args() -> argparse.Namespace:
 
 async def real_main() -> None:
     args = _parse_args()
-    if args.slack_channel:
-        await post_to_channel(args.slack_channel, "Hello from souzu")
     install_extras(frozenset({'attrs'}))
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
     loop = get_running_loop()
@@ -103,7 +102,7 @@ async def real_main() -> None:
     try:
         await wait(
             [
-                create_task(inner_loop()),
+                create_task(inner_loop(args.slack_channel)),
                 create_task(exit_event.wait()),
             ],
             return_when=FIRST_COMPLETED,
