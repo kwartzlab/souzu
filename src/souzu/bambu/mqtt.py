@@ -330,6 +330,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         if await cache_file.exists():
             async with await cache_file.open('r') as f:
                 cache_str = json.loads(await f.read())
+                logging.info(f"Loading cache file {cache_file}")
                 self._cache = _CACHE_SERIALIZER.structure(cache_str, _Cache)
 
         try:
@@ -338,6 +339,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
             serialized = json.dumps(_CACHE_SERIALIZER.unstructure(self._cache))
             async with await cache_file.open('w') as f:
                 await f.write(serialized)
+                logging.info(f"Saved cache file {cache_file}")
 
 
 async def _consume_queue[_T](
