@@ -38,6 +38,10 @@ async def discover_bambu_devices(
         ) -> None:
             self.handle_headers(request.headers)
 
+        @override
+        def connection_lost(self, exc: Exception | None) -> None:  # type: ignore[misc]
+            logging.info("Discovery stopped", exc_info=exc)
+
         def handle_headers(self, header_list: list[tuple[str, str]]) -> None:
             headers = CaseInsensitiveDict[str](header_list)
             if headers.get("NT") == "urn:bambulab-com:device:3dprinter:1":
@@ -68,4 +72,3 @@ async def discover_bambu_devices(
             await asyncio.sleep(max_time.total_seconds())
         finally:
             transport.close()
-            logging.info(f"Discovery stopped after {max_time}")
