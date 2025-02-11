@@ -32,30 +32,39 @@ async def log_messages(
 
 
 def is_printing(state: BambuStatusReport) -> bool:
-    return state.print_type != 'idle'
+    return (
+        state.print_type != 'idle'
+        and bool(state.mc_remaining_time)
+        and bool(state.gcode_file)
+    )
 
 
 async def log_print_started(
     device: BambuDevice, subscription: BambuMqttSubscription, slack_channel: str | None
 ) -> None:
     async with subscription.subscribe() as messages:
-        async for before, after in messages:
-            if is_printing(after) and not is_printing(before):
-                logging.info(
-                    f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining"
-                )
-                if slack_channel is not None:
-                    await post_to_channel(
-                        slack_channel,
-                        f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining",
+        while True:
+            # wait for print to start
+            async for _before, after in messages:
+                if is_printing(after):
+                    logging.info(
+                        f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining"
                     )
-            elif not is_printing(after) and is_printing(before):
-                logging.info(f"{device.device_name}: Print stopped")
-                if slack_channel is not None:
-                    await post_to_channel(
-                        slack_channel,
-                        f"{device.device_name}: Print stopped",
-                    )
+                    if slack_channel is not None:
+                        await post_to_channel(
+                            slack_channel,
+                            f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining",
+                        )
+                    break
+            async for _before, after in messages:
+                if not is_printing(after):
+                    logging.info(f"{device.device_name}: Print stopped")
+                    if slack_channel is not None:
+                        await post_to_channel(
+                            slack_channel,
+                            f"{device.device_name}: Print stopped",
+                        )
+                    break
 
 
 async def inner_loop(slack_channel: str | None) -> None:
