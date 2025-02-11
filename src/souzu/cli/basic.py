@@ -1,3 +1,4 @@
+import argparse
 import logging
 import signal
 from asyncio import (
@@ -79,9 +80,18 @@ async def inner_loop() -> None:
             queue.task_done()
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+    return parser.parse_args()
+
+
 async def real_main() -> None:
+    args = _parse_args()
     install_extras(frozenset({'attrs'}))
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
     loop = get_running_loop()
     exit_event = Event()
 
