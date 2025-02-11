@@ -32,7 +32,7 @@ async def log_messages(
 
 
 def is_printing(state: BambuStatusReport) -> bool:
-    return state.mc_print_stage == 2
+    return state.print_type != 'idle'
 
 
 async def log_print_started(
