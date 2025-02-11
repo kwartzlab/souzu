@@ -13,6 +13,8 @@ from asyncio import (
 )
 from types import FrameType
 
+from prettyprinter import install_extras, pprint
+
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttSubscription
 from souzu.config import BAMBU_ACCESS_CODES
@@ -25,7 +27,7 @@ async def print_messages(host: str, device_id: str) -> None:
         return
     async with BambuMqttSubscription(host, device_id, access_code) as subscription:
         async for message in subscription.messages:
-            print(message)  # noqa: T201
+            pprint(message)
 
 
 async def inner_loop() -> None:
@@ -39,6 +41,7 @@ async def inner_loop() -> None:
 
 
 async def real_main() -> None:
+    install_extras(frozenset({'attrs'}))
     loop = get_running_loop()
     exit_event = Event()
 
