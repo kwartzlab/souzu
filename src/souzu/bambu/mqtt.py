@@ -15,7 +15,7 @@ from pathlib import Path
 from socket import socket
 from ssl import SSLContext, SSLSession, SSLSocket
 from types import TracebackType
-from typing import Self, override
+from typing import Any, Self, cast, override
 
 from aiomqtt import Client, TLSParameters
 from aiomqtt.types import PayloadType
@@ -133,9 +133,16 @@ class _Cache:
     last_full_update: datetime | None = None
 
 
-def _replace_nonempty[_T](
+def _custom_list_merge[_T](
     config: Merger, path: list[str], base: _T, nxt: _T
 ) -> _T | object:
+    if path == ["print", "lights_report"]:
+        base_list = cast(list[dict[str, Any]], base)
+        items = {item["node"]: item for item in base_list}
+        for item in cast(list[dict[str, Any]], nxt):
+            items[item["node"]] = item
+        return list(items.values())
+
     if isinstance(nxt, list):
         if nxt:
             return nxt
@@ -146,7 +153,7 @@ def _replace_nonempty[_T](
 
 _MERGER = Merger(
     [
-        (list, _replace_nonempty),
+        (list, _custom_list_merge),
         (dict, "merge"),
         (set, "union"),
     ],
