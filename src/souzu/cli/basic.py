@@ -20,6 +20,7 @@ from prettyprinter import install_extras, pformat
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttSubscription
+from souzu.slack.thread import post_to_channel
 
 
 async def log_messages(
@@ -36,12 +37,7 @@ async def log_print_started(
     running_state: bool | None = None
     async with subscription.subscribe() as messages:
         async for _before, after in messages:
-            print_running = (
-                after.mc_print_stage == 2
-                or after.layer_num
-                or after.mc_percent
-                or after.mc_remaining_time
-            )
+            print_running = after.mc_print_stage == 2
             if print_running:
                 if running_state is None:
                     if after.mc_remaining_time is not None:
@@ -55,8 +51,7 @@ async def log_print_started(
                         f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining"
                     )
                 running_state = True
-            elif after.mc_print_stage == 1:
-                # definitely not running
+            else:
                 if running_state:
                     logging.info(f"{device.device_name}: Print stopped")
                 running_state = False
@@ -86,11 +81,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
+    parser.add_argument("--slack-channel", help="Slack channel to post to")
     return parser.parse_args()
 
 
 async def real_main() -> None:
     args = _parse_args()
+    if args.slack_channel:
+        await post_to_channel(args.slack_channel, "Hello from souzu")
     install_extras(frozenset({'attrs'}))
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
     loop = get_running_loop()
