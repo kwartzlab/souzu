@@ -1,10 +1,10 @@
-import argparse
 import logging
 import signal
 from asyncio import (
     FIRST_COMPLETED,
     CancelledError,
     Event,
+    Queue,
     TaskGroup,
     create_task,
     get_running_loop,
@@ -13,6 +13,7 @@ from asyncio import (
 )
 from types import FrameType
 
+from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttSubscription
 from souzu.config import BAMBU_ACCESS_CODES
 
@@ -27,25 +28,14 @@ async def print_messages(host: str, device_id: str) -> None:
             print(message.__dict__)  # noqa: T201
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--device",
-        nargs=2,
-        dest="devices",
-        action="append",
-        metavar=("host", "device_id"),
-        help="Device configuration tuple: host, device_id",
-    )
-    args = parser.parse_args()
-    return args
-
-
 async def inner_loop() -> None:
-    args = _parse_args()
     async with TaskGroup() as tg:
-        for host, device_id in args.devices:
-            tg.create_task(print_messages(host, device_id))
+        queue = Queue[BambuDevice]()
+        tg.create_task(discover_bambu_devices(queue))
+        while True:
+            device = await queue.get()
+            print(f"Found device {device.device_id} at {device.ip_address}")  # noqa: T201
+            tg.create_task(print_messages(device.ip_address, device.device_id))
 
 
 async def real_main() -> None:
