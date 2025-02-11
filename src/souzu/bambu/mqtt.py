@@ -6,9 +6,10 @@ from asyncio import Queue, QueueFull, Task, TaskGroup
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import (
     AbstractAsyncContextManager,
-    AbstractContextManager,
+    AsyncExitStack,
     asynccontextmanager,
 )
+from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 from socket import socket
@@ -18,14 +19,18 @@ from typing import Self, override
 
 from aiomqtt import Client, TLSParameters
 from aiomqtt.types import PayloadType
+from anyio import Path as AsyncPath
 from attrs import Factory, frozen
-from cattrs import structure, unstructure
+from cattrs import Converter, structure, unstructure
 from deepmerge.merger import Merger
 from deepmerge.strategy.core import STRATEGY_END
+from xdg_base_dirs import xdg_cache_home
 
 from souzu.bambu import res
 from souzu.bambu.discovery import BambuDevice
 from souzu.config import BAMBU_ACCESS_CODES
+
+_CACHE_DIR = AsyncPath(xdg_cache_home() / "souzu")
 
 # see more fields at https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md
 
@@ -121,6 +126,13 @@ class _BambuWrapper:
     print: BambuStatusReport
 
 
+@frozen
+class _Cache:
+    print: BambuStatusReport | None = None
+    last_update: datetime | None = None
+    last_full_update: datetime | None = None
+
+
 def _replace_nonempty[_T](
     config: Merger, path: list[str], base: _T, nxt: _T
 ) -> _T | object:
@@ -140,6 +152,12 @@ _MERGER = Merger(
     ],
     ["override"],
     ["override"],
+)
+
+_CACHE_SERIALIZER = Converter()
+_CACHE_SERIALIZER.register_unstructure_hook(datetime, lambda dt: dt.isoformat())
+_CACHE_SERIALIZER.register_structure_hook(
+    datetime, lambda dt, _: datetime.fromisoformat(dt)
 )
 
 
@@ -185,12 +203,12 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
             raise ValueError(f"No access code for device {device.device_id}")
 
         self._entered = False
-        self._client: Client | None = None
-        self._ca_path_ctx: AbstractContextManager[Path] | None = None
+        self._stack = AsyncExitStack()
         self._ca_path: Path | None = None
+        self._client: Client | None = None
         self._consume_task: Task | None = None
 
-        self._status: _BambuWrapper = _BambuWrapper(BambuStatusReport())
+        self._cache = _Cache()
 
         self._queues = list[Queue[tuple[BambuStatusReport, BambuStatusReport]]]()
 
@@ -199,12 +217,15 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         if self._entered:
             raise RuntimeError("MQTT subscription already initialized")
 
-        self._ca_path_ctx = resources.path(res, "bambu_lan_ca_cert.pem")
-        self._ca_path = self._ca_path_ctx.__enter__()
+        await self._stack.__aenter__()
 
+        await self._stack.enter_async_context(self._with_cache())
+
+        self._ca_path = self._stack.enter_context(
+            resources.path(res, "bambu_lan_ca_cert.pem")
+        )
         tls_params = TLSParameters(ca_certs=str(self._ca_path))
-
-        self._client = Client(
+        client = Client(
             hostname=self.ip,
             port=8883,
             username="bblp",
@@ -213,12 +234,12 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         )
 
         # patch to send device id in SNI, and fix cert validation
-        assert self._client._client._ssl_context is not None
-        self._client._client._ssl_context = _SniSslContext(
-            self.device_id, self._client._client._ssl_context
+        assert client._client._ssl_context is not None
+        client._client._ssl_context = _SniSslContext(
+            self.device_id, client._client._ssl_context
         )
 
-        await self._client.__aenter__()
+        self._client = await self._stack.enter_async_context(client)
         await self._client.subscribe(f"device/{self.device_id}/report")
         self._consume_task = self.task_group.create_task(self._consume_messages())
 
@@ -232,20 +253,13 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if (
-            self._client is None
-            or self._ca_path_ctx is None
-            or self._consume_task is None
-        ):
+        if self._client is None or self._consume_task is None:
             raise RuntimeError("MQTT subscription not initialized or already closed")
         self._consume_task.cancel()
         try:
-            await self._client.__aexit__(exc_type, exc, tb)
+            await self._stack.__aexit__(exc_type, exc, tb)
         finally:
-            try:
-                self._ca_path_ctx.__exit__(exc_type, exc, tb)
-            finally:
-                self._client = None
+            self._client = None
 
     @asynccontextmanager
     async def subscribe(
@@ -275,11 +289,15 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         async for message in self._client.messages:
             wrapper = self._parse_payload(message.payload)
             if wrapper is not None:
-                old = self._status
-                self._status = wrapper
+                old = self._cache.print or BambuStatusReport()
+                self._cache = _Cache(
+                    print=wrapper.print,
+                    last_update=datetime.now(UTC),
+                    last_full_update=self._cache.last_full_update,
+                )
                 for queue in self._queues:
                     try:
-                        queue.put_nowait((old.print, wrapper.print))
+                        queue.put_nowait((old, wrapper.print))
                     except QueueFull:
                         logging.warning("Dropping message due to full queue")
 
@@ -292,12 +310,34 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
             else:
                 raise ValueError(f"Invalid message data type: {type(payload)}")
             new_dict = json.loads(payload_str)
-            old_dict = unstructure(self._status)
+            old_dict = {"print": unstructure(self._cache.print) or {}}
             merged = _MERGER.merge(old_dict, new_dict)
             return structure(merged, _BambuWrapper)
         except Exception as e:
             logging.exception(f"Error parsing message: {e}", extra={"payload": payload})
             return None
+
+    @asynccontextmanager
+    async def _with_cache(self) -> AsyncGenerator[None, None]:
+        """
+        Context manager to load and save a cache file.
+
+        When the context manager exits due to AsynCExitStack, the cache file
+        will be saved.
+        """
+        await _CACHE_DIR.mkdir(exist_ok=True, parents=True)
+        cache_file = _CACHE_DIR / f'{self.device_id}.json'
+        if await cache_file.exists():
+            async with await cache_file.open('r') as f:
+                cache_str = json.loads(await f.read())
+                self._cache = _CACHE_SERIALIZER.structure(cache_str, _Cache)
+
+        try:
+            yield
+        finally:
+            serialized = json.dumps(_CACHE_SERIALIZER.unstructure(self._cache))
+            async with await cache_file.open('w') as f:
+                await f.write(serialized)
 
 
 async def _consume_queue[_T](
