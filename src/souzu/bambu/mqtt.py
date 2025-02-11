@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from importlib import resources
@@ -9,9 +11,95 @@ from ssl import SSLContext, SSLSession, SSLSocket
 from types import TracebackType
 from typing import Self, override
 
-from aiomqtt import Client, Message, TLSParameters
+from aiomqtt import Client, TLSParameters
+from attrs import Factory, frozen
+from cattrs import structure
 
 from souzu.bambu import res
+
+
+@frozen
+class BambuAmsSlot:
+    id: int | None = None
+    cols: list[str] = Factory(list)
+    nozzle_temp_max: float | None = None
+    nozzle_temp_min: float | None = None
+    tag_uid: str | None = None
+    tray_color: str | None = None
+    tray_info_idx: str | None = None
+    tray_type: str | None = None
+
+
+@frozen
+class BambuAmsDetails:
+    humidity: int | None = None
+    id: int | None = None
+    temp: float | None = None
+    tray: list[BambuAmsSlot] = Factory(list)
+
+
+@frozen
+class BambuAmsSummary:
+    ams: list[BambuAmsDetails] = Factory(list)
+    tray_now: int | None = None
+    tray_pre: int | None = None
+    version: int | None = None
+
+
+@frozen
+class BambuLightReport:
+    node: str | None = None
+    mode: str | None = None  # "on", "flashing", probably "off"
+
+
+@frozen
+class BambuUploadReport:
+    file_size: int | None = None
+    finish_size: int | None = None
+    message: str | None = None
+    oss_url: str | None = None
+    progress: int | None = None
+    speed: int | None = None
+    status: str | None = None
+    time_remaining: int | None = None
+    trouble_id: str | None = None
+
+
+@frozen
+class BambuStatusReport:
+    ams: BambuAmsSummary | None = None
+    aux_part_fan: bool | None = None
+    bed_target_temper: float | None = None
+    bed_temper: float | None = None
+    big_fan1_speed: int | None = None  # aux fan
+    big_fan2_speed: int | None = None  # chamber fan
+    chamber_temper: float | None = None
+    cooling_fan_speed: int | None = None
+    fail_reason: int | None = None
+    fan_gear: int | None = None
+    gcode_file: str | None = None
+    gcode_file_prepare_percent: int | None = None
+    gcode_start_time: int | None = None
+    gcode_state: str | None = None
+    heatbreak_fan_speed: int | None = None
+    layer_num: int | None = None
+    lights_report: list[BambuLightReport] = Factory(list)
+    nozzle_target_temper: float | None = None
+    nozzle_temper: float | None = None
+    print_error: int | None = None
+    print_gcode_action: int | None = None
+    print_real_action: int | None = None
+    print_type: str | None = None
+    queue_number: int | None = None
+    sdcard: bool | None = None
+    total_layer_num: int | None = None
+    upload: BambuUploadReport | None = None
+    wifi_signal: str | None = None
+
+
+@frozen
+class _BambuWrapper:
+    print: BambuStatusReport
 
 
 class _SniSslContext(SSLContext):
@@ -104,8 +192,23 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
                 self._client = None
 
     @property
-    async def messages(self) -> AsyncIterator[Message]:
+    async def messages(self) -> AsyncIterator[BambuStatusReport]:
         if self._client is None:
             raise RuntimeError("MQTT subscription not initialized")
         async for message in self._client.messages:
-            yield message
+            try:
+                if isinstance(message.payload, bytes):
+                    payload_str = message.payload.decode()
+                elif isinstance(message.payload, str):
+                    payload_str = message.payload
+                else:
+                    raise ValueError(
+                        f"Invalid message data type: {type(message.payload)}"
+                    )
+                payload = json.loads(payload_str)
+                wrapper = structure(payload, _BambuWrapper)
+                yield wrapper.print
+            except Exception as e:
+                logging.exception(
+                    f"Error parsing message: {e}", extra={"payload": message.payload}
+                )

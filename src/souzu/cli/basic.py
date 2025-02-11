@@ -25,7 +25,7 @@ async def print_messages(host: str, device_id: str) -> None:
         return
     async with BambuMqttSubscription(host, device_id, access_code) as subscription:
         async for message in subscription.messages:
-            print(message.__dict__)  # noqa: T201
+            print(message)  # noqa: T201
 
 
 async def inner_loop() -> None:
