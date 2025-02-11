@@ -12,8 +12,10 @@ from types import TracebackType
 from typing import Self, override
 
 from aiomqtt import Client, TLSParameters
+from aiomqtt.types import PayloadType
 from attrs import Factory, frozen
-from cattrs import structure
+from cattrs import structure, unstructure
+from deepmerge import always_merger
 
 from souzu.bambu import res
 
@@ -144,6 +146,8 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         self._ca_path_ctx: AbstractContextManager[Path] | None = None
         self._ca_path: Path | None = None
 
+        self._status: _BambuWrapper = _BambuWrapper(BambuStatusReport())
+
     @override
     async def __aenter__(self) -> Self:
         if self._entered:
@@ -196,19 +200,23 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         if self._client is None:
             raise RuntimeError("MQTT subscription not initialized")
         async for message in self._client.messages:
-            try:
-                if isinstance(message.payload, bytes):
-                    payload_str = message.payload.decode()
-                elif isinstance(message.payload, str):
-                    payload_str = message.payload
-                else:
-                    raise ValueError(
-                        f"Invalid message data type: {type(message.payload)}"
-                    )
-                payload = json.loads(payload_str)
-                wrapper = structure(payload, _BambuWrapper)
+            wrapper = self._parse_payload(message.payload)
+            if wrapper is not None:
+                self._status = wrapper
                 yield wrapper.print
-            except Exception as e:
-                logging.exception(
-                    f"Error parsing message: {e}", extra={"payload": message.payload}
-                )
+
+    def _parse_payload(self, payload: PayloadType) -> _BambuWrapper | None:
+        try:
+            if isinstance(payload, bytes):
+                payload_str = payload.decode()
+            elif isinstance(payload, str):
+                payload_str = payload
+            else:
+                raise ValueError(f"Invalid message data type: {type(payload)}")
+            new_dict = json.loads(payload_str)
+            old_dict = unstructure(self._status)
+            merged = always_merger.merge(old_dict, new_dict)
+            return structure(merged, _BambuWrapper)
+        except Exception as e:
+            logging.exception(f"Error parsing message: {e}", extra={"payload": payload})
+            return None
