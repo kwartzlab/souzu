@@ -51,7 +51,8 @@ async def post_to_thread(
             logging.debug(f"No channel to post message: {message}")
             return None
         response = await _CLIENT.chat_postMessage(
-            channel=thread_ts,
+            channel=channel,
+            thread_ts=thread_ts,
             text=message,
         )
     except Exception as e:
