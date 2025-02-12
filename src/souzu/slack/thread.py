@@ -17,13 +17,16 @@ async def post_to_channel(channel: str | None, message: str) -> str | None:
 
     Return the timestamp of the message (if available) to use for editing or threading.
     """
-    if channel is None:
-        logging.debug(f"No channel to post message: {message}")
-        return None
-    response = await _CLIENT.chat_postMessage(
-        channel=channel,
-        text=message,
-    )
+    try:
+        if channel is None:
+            logging.debug(f"No channel to post message: {message}")
+            return None
+        response = await _CLIENT.chat_postMessage(
+            channel=channel,
+            text=message,
+        )
+    except Exception as e:
+        raise SlackApiError(f"Failed to post message to channel: {e}") from e
     if not response.get('ok'):
         raise SlackApiError(
             f"Failed to post message to channel: {response.get('error', 'Unknown error')}"
@@ -41,15 +44,18 @@ async def post_to_thread(
 
     If thread_ts is None, behave as post_to_channel.
     """
-    if thread_ts is None:
-        return await post_to_channel(channel, message)
-    if channel is None:
-        logging.debug(f"No channel to post message: {message}")
-        return None
-    response = await _CLIENT.chat_postMessage(
-        channel=thread_ts,
-        text=message,
-    )
+    try:
+        if thread_ts is None:
+            return await post_to_channel(channel, message)
+        if channel is None:
+            logging.debug(f"No channel to post message: {message}")
+            return None
+        response = await _CLIENT.chat_postMessage(
+            channel=thread_ts,
+            text=message,
+        )
+    except Exception as e:
+        raise SlackApiError(f"Failed to post message to thread: {e}") from e
     if not response.get('ok'):
         raise SlackApiError(
             f"Failed to post message to thread: {response.get('error', 'Unknown error')}"
@@ -61,14 +67,17 @@ async def edit_message(channel: str | None, message_ts: str, message: str) -> No
     """
     Edit a message.
     """
-    if channel is None:
-        logging.debug(f"No channel to edit message: {message_ts}")
-        return
-    response = await _CLIENT.chat_update(
-        channel=channel,
-        ts=message_ts,
-        text=message,
-    )
+    try:
+        if channel is None:
+            logging.debug(f"No channel to edit message: {message_ts}")
+            return
+        response = await _CLIENT.chat_update(
+            channel=channel,
+            ts=message_ts,
+            text=message,
+        )
+    except Exception as e:
+        raise SlackApiError(f"Failed to edit message: {e}") from e
     if not response.get('ok'):
         raise SlackApiError(
             f"Failed to edit message: {response.get('error', 'Unknown error')}"
