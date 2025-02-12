@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from asyncio import Queue, QueueFull, Task, TaskGroup
+from asyncio import CancelledError, Queue, QueueFull, Task, TaskGroup
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import (
     AbstractAsyncContextManager,
@@ -17,7 +17,7 @@ from ssl import SSLContext, SSLSession, SSLSocket
 from types import TracebackType
 from typing import Any, Self, cast, override
 
-from aiomqtt import Client, TLSParameters
+from aiomqtt import Client, MqttError, TLSParameters
 from aiomqtt.types import PayloadType
 from anyio import Path as AsyncPath
 from attrs import Factory, frozen
@@ -293,20 +293,25 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
     async def _consume_messages(self) -> None:
         if self._client is None:
             raise RuntimeError("MQTT subscription not initialized")
-        async for message in self._client.messages:
-            wrapper = self._parse_payload(message.payload)
-            if wrapper is not None:
-                old = self._cache.print or BambuStatusReport()
-                self._cache = _Cache(
-                    print=wrapper.print,
-                    last_update=datetime.now(UTC),
-                    last_full_update=self._cache.last_full_update,
-                )
-                for queue in self._queues:
-                    try:
-                        queue.put_nowait((old, wrapper.print))
-                    except QueueFull:
-                        logging.warning("Dropping message due to full queue")
+        try:
+            async for message in self._client.messages:
+                wrapper = self._parse_payload(message.payload)
+                if wrapper is not None:
+                    old = self._cache.print or BambuStatusReport()
+                    self._cache = _Cache(
+                        print=wrapper.print,
+                        last_update=datetime.now(UTC),
+                        last_full_update=self._cache.last_full_update,
+                    )
+                    for queue in self._queues:
+                        try:
+                            queue.put_nowait((old, wrapper.print))
+                        except QueueFull:
+                            logging.warning("Dropping message due to full queue")
+        except MqttError as e:
+            logging.exception(f"MQTT error: {e}")
+            # TODO reconnect
+            raise CancelledError() from e
 
     def _parse_payload(self, payload: PayloadType) -> _BambuWrapper | None:
         try:

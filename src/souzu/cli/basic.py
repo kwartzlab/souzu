@@ -26,9 +26,12 @@ from souzu.slack.thread import post_to_channel
 async def log_messages(
     device: BambuDevice, subscription: BambuMqttSubscription
 ) -> None:
-    async with subscription.subscribe() as messages:
-        async for _before, after in messages:
-            logging.debug(f"{device.device_name}: {pformat(after)}")
+    try:
+        async with subscription.subscribe() as messages:
+            async for _before, after in messages:
+                logging.debug(f"{device.device_name}: {pformat(after)}")
+    except Exception:
+        logging.exception(f"Logger task failed for {device.device_name}")
 
 
 def is_printing(state: BambuStatusReport) -> bool:
@@ -39,32 +42,35 @@ def is_printing(state: BambuStatusReport) -> bool:
     )
 
 
-async def log_print_started(
+async def report_print_started(
     device: BambuDevice, subscription: BambuMqttSubscription, slack_channel: str | None
 ) -> None:
-    async with subscription.subscribe() as messages:
-        while True:
-            # wait for print to start
-            async for _before, after in messages:
-                if is_printing(after):
-                    logging.info(
-                        f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining"
-                    )
-                    if slack_channel is not None:
-                        await post_to_channel(
-                            slack_channel,
-                            f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining",
+    try:
+        async with subscription.subscribe() as messages:
+            while True:
+                # wait for print to start
+                async for _before, after in messages:
+                    if is_printing(after):
+                        logging.info(
+                            f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining"
                         )
-                    break
-            async for _before, after in messages:
-                if not is_printing(after):
-                    logging.info(f"{device.device_name}: Print stopped")
-                    if slack_channel is not None:
-                        await post_to_channel(
-                            slack_channel,
-                            f"{device.device_name}: Print stopped",
-                        )
-                    break
+                        if slack_channel is not None:
+                            await post_to_channel(
+                                slack_channel,
+                                f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining",
+                            )
+                        break
+                async for _before, after in messages:
+                    if not is_printing(after):
+                        logging.info(f"{device.device_name}: Print stopped")
+                        if slack_channel is not None:
+                            await post_to_channel(
+                                slack_channel,
+                                f"{device.device_name}: Print stopped",
+                            )
+                        break
+    except Exception:
+        logging.exception(f"Print monitor task failed for {device.device_name}")
 
 
 async def inner_loop(slack_channel: str | None) -> None:
@@ -78,7 +84,9 @@ async def inner_loop(slack_channel: str | None) -> None:
                 subscription = BambuMqttSubscription(tg, device)
                 await stack.enter_async_context(subscription)
                 tg.create_task(log_messages(device, subscription))
-                tg.create_task(log_print_started(device, subscription, slack_channel))
+                tg.create_task(
+                    report_print_started(device, subscription, slack_channel)
+                )
             except Exception:
                 logging.exception(
                     f"Failed to set up subscription for {device.device_name}"
