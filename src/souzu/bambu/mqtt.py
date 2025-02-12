@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from asyncio import CancelledError, Queue, QueueFull, Task, TaskGroup
+from asyncio import Queue, QueueFull, Task, TaskGroup, sleep
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import (
     AbstractAsyncContextManager,
@@ -31,6 +31,8 @@ from souzu.bambu.discovery import BambuDevice
 from souzu.config import BAMBU_ACCESS_CODES
 
 _CACHE_DIR = AsyncPath(xdg_cache_home() / "souzu")
+
+MQTT_ERROR_RECONNECT_DELAY = 30
 
 # see more fields at https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md
 
@@ -209,7 +211,6 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         if not self.access_code:
             raise ValueError(f"No access code for device {device.device_id}")
 
-        self._entered = False
         self._stack = AsyncExitStack()
         self._ca_path: Path | None = None
         self._client: Client | None = None
@@ -221,36 +222,11 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
 
     @override
     async def __aenter__(self) -> Self:
-        if self._entered:
+        if self._consume_task is not None:
             raise RuntimeError("MQTT subscription already initialized")
-
         await self._stack.__aenter__()
-
         await self._stack.enter_async_context(self._with_cache())
-
-        self._ca_path = self._stack.enter_context(
-            resources.path(res, "bambu_lan_ca_cert.pem")
-        )
-        tls_params = TLSParameters(ca_certs=str(self._ca_path))
-        client = Client(
-            hostname=self.ip,
-            port=8883,
-            username="bblp",
-            password=self.access_code,
-            tls_params=tls_params,
-        )
-
-        # patch to send device id in SNI, and fix cert validation
-        assert client._client._ssl_context is not None
-        client._client._ssl_context = _SniSslContext(
-            self.device_id, client._client._ssl_context
-        )
-
-        self._client = await self._stack.enter_async_context(client)
-        await self._client.subscribe(f"device/{self.device_id}/report")
         self._consume_task = self.task_group.create_task(self._consume_messages())
-
-        self._entered = True
         return self
 
     @override
@@ -260,13 +236,10 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self._client is None or self._consume_task is None:
+        if self._consume_task is None:
             raise RuntimeError("MQTT subscription not initialized or already closed")
         self._consume_task.cancel()
-        try:
-            await self._stack.__aexit__(exc_type, exc, tb)
-        finally:
-            self._client = None
+        await self._stack.__aexit__(exc_type, exc, tb)
 
     @asynccontextmanager
     async def subscribe(
@@ -291,27 +264,48 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
             self._queues.remove(queue)
 
     async def _consume_messages(self) -> None:
-        if self._client is None:
-            raise RuntimeError("MQTT subscription not initialized")
-        try:
-            async for message in self._client.messages:
-                wrapper = self._parse_payload(message.payload)
-                if wrapper is not None:
-                    old = self._cache.print or BambuStatusReport()
-                    self._cache = _Cache(
-                        print=wrapper.print,
-                        last_update=datetime.now(UTC),
-                        last_full_update=self._cache.last_full_update,
-                    )
-                    for queue in self._queues:
-                        try:
-                            queue.put_nowait((old, wrapper.print))
-                        except QueueFull:
-                            logging.warning("Dropping message due to full queue")
-        except MqttError as e:
-            logging.exception(f"MQTT error: {e}")
-            # TODO reconnect
-            raise CancelledError() from e
+        self._ca_path = self._stack.enter_context(
+            resources.path(res, "bambu_lan_ca_cert.pem")
+        )
+        tls_params = TLSParameters(ca_certs=str(self._ca_path))
+        while True:
+            client = Client(
+                hostname=self.ip,
+                port=8883,
+                username="bblp",
+                password=self.access_code,
+                tls_params=tls_params,
+            )
+
+            # patch to send device id in SNI, and fix cert validation
+            assert client._client._ssl_context is not None
+            client._client._ssl_context = _SniSslContext(
+                self.device_id, client._client._ssl_context
+            )
+
+            try:
+                async with client:
+                    await client.subscribe(f"device/{self.device_id}/report")
+                    async for message in client.messages:
+                        wrapper = self._parse_payload(message.payload)
+                        if wrapper is not None:
+                            old = self._cache.print or BambuStatusReport()
+                            self._cache = _Cache(
+                                print=wrapper.print,
+                                last_update=datetime.now(UTC),
+                                last_full_update=self._cache.last_full_update,
+                            )
+                            for queue in self._queues:
+                                try:
+                                    queue.put_nowait((old, wrapper.print))
+                                except QueueFull:
+                                    logging.warning(
+                                        "Dropping message due to full queue"
+                                    )
+            except MqttError as e:
+                logging.exception(f"MQTT error: {e}")
+                await sleep(MQTT_ERROR_RECONNECT_DELAY)
+                # TODO how to handle rediscovery at new IP?
 
     def _parse_payload(self, payload: PayloadType) -> _BambuWrapper | None:
         try:
@@ -334,7 +328,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         """
         Context manager to load and save a cache file.
 
-        When the context manager exits due to AsynCExitStack, the cache file
+        When the context manager exits due to AsyncExitStack, the cache file
         will be saved.
         """
         await _CACHE_DIR.mkdir(exist_ok=True, parents=True)
