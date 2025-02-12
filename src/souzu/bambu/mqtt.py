@@ -332,7 +332,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         will be saved.
         """
         await _CACHE_DIR.mkdir(exist_ok=True, parents=True)
-        cache_file = _CACHE_DIR / f'{self.device_id}.json'
+        cache_file = _CACHE_DIR / f'mqtt.{self.device_id}.json'
         if await cache_file.exists():
             async with await cache_file.open('r') as f:
                 cache_str = json.loads(await f.read())
