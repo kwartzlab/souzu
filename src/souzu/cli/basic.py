@@ -35,11 +35,7 @@ async def log_messages(
 
 
 def is_printing(state: BambuStatusReport) -> bool:
-    return (
-        state.print_type != 'idle'
-        and bool(state.mc_remaining_time)
-        and bool(state.gcode_file)
-    )
+    return state.print_type != 'idle' and bool(state.mc_remaining_time)
 
 
 async def report_print_started(
@@ -52,12 +48,12 @@ async def report_print_started(
                 async for _before, after in messages:
                     if is_printing(after):
                         logging.info(
-                            f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining"
+                            f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining"
                         )
                         if slack_channel is not None:
                             await post_to_channel(
                                 slack_channel,
-                                f"{device.device_name}: Print {after.gcode_file} started, {after.mc_remaining_time} minutes remaining",
+                                f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining",
                             )
                         break
                 async for _before, after in messages:

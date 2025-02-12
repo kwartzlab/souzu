@@ -74,7 +74,7 @@ class BambuUploadReport:
     file_size: int | None = None
     finish_size: int | None = None
     message: str | None = None
-    oss_url: str | None = None
+    # oss_url: str | None = None  # deliberately not captured, for privacy
     progress: int | None = None
     speed: int | None = None
     status: str | None = None
@@ -94,7 +94,7 @@ class BambuStatusReport:
     cooling_fan_speed: int | None = None
     fail_reason: int | None = None
     fan_gear: int | None = None
-    gcode_file: str | None = None
+    # gcode_file: str | None = None  # deliberately not captured, for privacy
     gcode_file_prepare_percent: int | None = None
     gcode_start_time: int | None = None
     gcode_state: str | None = (
