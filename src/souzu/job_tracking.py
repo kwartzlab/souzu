@@ -6,14 +6,19 @@ from datetime import timedelta
 from math import ceil
 
 from anyio import Path as AsyncPath
-from attrs import define, frozen
+from attrs import define
 from cattrs import Converter
 from xdg_base_dirs import xdg_state_home
 
 from souzu.bambu.discovery import BambuDevice
 from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
 from souzu.config import SLACK_PRINT_NOTIFICATION_CHANNEL
-from souzu.slack.thread import post_to_channel
+from souzu.slack.thread import (
+    SlackApiError,
+    edit_message,
+    post_to_channel,
+    post_to_thread,
+)
 
 _ONE_MINUTE = 60
 _FIVE_MINUTES = 5 * 60
@@ -33,9 +38,10 @@ _STATE_SERIALIZER.register_structure_hook(
 )
 
 
-@frozen
+@define
 class PrintJob:
     duration: timedelta
+    slack_thread_ts: str | None = None
 
 
 @define
@@ -61,8 +67,8 @@ def _pretty_print(duration: timedelta) -> str:
         hours = ceil(duration.total_seconds() / _HALF_HOUR) / 2
         if hours == 1:
             return "1 hour"
-        elif hours == int(hours):
-            return f"{hours:d} hours"
+        elif hours.is_integer():
+            return f"{int(hours)} hours"
         else:
             return f"{hours:.1f} hours"
     else:
@@ -87,8 +93,8 @@ async def _wait_for_job_completion(reports: AsyncIterable[BambuStatusReport]) ->
             return
 
 
-async def _notify_job_started(job: PrintJob, device: BambuDevice) -> None:
-    await post_to_channel(
+async def _notify_job_started(job: PrintJob, device: BambuDevice) -> str | None:
+    return await post_to_channel(
         SLACK_PRINT_NOTIFICATION_CHANNEL,
         f"{device.device_name}: Print started, {_pretty_print(job.duration)} remaining",
     )
@@ -97,10 +103,17 @@ async def _notify_job_started(job: PrintJob, device: BambuDevice) -> None:
 async def _notify_job_completed(job: PrintJob, device: BambuDevice) -> None:
     # TODO detect failed prints and report them
     # TODO detect paused prints
-    await post_to_channel(
+    await post_to_thread(
         SLACK_PRINT_NOTIFICATION_CHANNEL,
-        f"{device.device_name}: Print finished",
+        job.slack_thread_ts,
+        f"{device.device_name}: Print finished!",
     )
+    if job.slack_thread_ts:
+        await edit_message(
+            SLACK_PRINT_NOTIFICATION_CHANNEL,
+            job.slack_thread_ts,
+            f"~~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~~\n\nFinished!",
+        )
 
 
 async def monitor_printer_status(
@@ -127,10 +140,19 @@ async def monitor_printer_status(
                 while True:
                     if state.current_job is None:
                         state.current_job = await _wait_for_job(reports)
-                        await _notify_job_started(state.current_job, device)
+                        try:
+                            thread_ts = await _notify_job_started(
+                                state.current_job, device
+                            )
+                            state.current_job.slack_thread_ts = thread_ts
+                        except SlackApiError as e:
+                            logging.error(f"Failed to notify job started: {e}")
                     else:
                         await _wait_for_job_completion(reports)
-                        await _notify_job_completed(state.current_job, device)
+                        try:
+                            await _notify_job_completed(state.current_job, device)
+                        except SlackApiError as e:
+                            logging.error(f"Failed to notify job completed: {e}")
                         state.current_job = None
         finally:
             serialized = json.dumps(_STATE_SERIALIZER.unstructure(state))
