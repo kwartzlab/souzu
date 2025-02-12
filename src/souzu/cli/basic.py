@@ -19,57 +19,20 @@ from types import FrameType
 from prettyprinter import install_extras, pformat
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
-from souzu.bambu.mqtt import BambuMqttSubscription, BambuStatusReport
-from souzu.slack.thread import post_to_channel
+from souzu.bambu.mqtt import BambuMqttConnection
+from souzu.job_tracking import monitor_printer_status
 
 
-async def log_messages(
-    device: BambuDevice, subscription: BambuMqttSubscription
-) -> None:
+async def log_messages(device: BambuDevice, subscription: BambuMqttConnection) -> None:
     try:
         async with subscription.subscribe() as messages:
-            async for _before, after in messages:
-                logging.debug(f"{device.device_name}: {pformat(after)}")
+            async for message in messages:
+                logging.debug(f"{device.device_name}: {pformat(message)}")
     except Exception:
         logging.exception(f"Logger task failed for {device.device_name}")
 
 
-def is_printing(state: BambuStatusReport) -> bool:
-    return state.print_type != 'idle' and bool(state.mc_remaining_time)
-
-
-async def report_print_started(
-    device: BambuDevice, subscription: BambuMqttSubscription, slack_channel: str | None
-) -> None:
-    try:
-        async with subscription.subscribe() as messages:
-            while True:
-                # wait for print to start
-                async for _before, after in messages:
-                    if is_printing(after):
-                        logging.info(
-                            f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining"
-                        )
-                        if slack_channel is not None:
-                            await post_to_channel(
-                                slack_channel,
-                                f"{device.device_name}: Print started, {after.mc_remaining_time} minutes remaining",
-                            )
-                        break
-                async for _before, after in messages:
-                    if not is_printing(after):
-                        logging.info(f"{device.device_name}: Print stopped")
-                        if slack_channel is not None:
-                            await post_to_channel(
-                                slack_channel,
-                                f"{device.device_name}: Print stopped",
-                            )
-                        break
-    except Exception:
-        logging.exception(f"Print monitor task failed for {device.device_name}")
-
-
-async def inner_loop(slack_channel: str | None) -> None:
+async def inner_loop() -> None:
     queue = Queue[BambuDevice]()
     async with TaskGroup() as tg, AsyncExitStack() as stack:
         tg.create_task(discover_bambu_devices(queue, max_time=timedelta(minutes=1)))
@@ -77,12 +40,11 @@ async def inner_loop(slack_channel: str | None) -> None:
             device = await queue.get()
             logging.info(f"Found device {device.device_name} at {device.ip_address}")
             try:
-                subscription = BambuMqttSubscription(tg, device)
-                await stack.enter_async_context(subscription)
-                tg.create_task(log_messages(device, subscription))
-                tg.create_task(
-                    report_print_started(device, subscription, slack_channel)
+                connection = await stack.enter_async_context(
+                    BambuMqttConnection(tg, device)
                 )
+                tg.create_task(log_messages(device, connection))
+                tg.create_task(monitor_printer_status(device, connection))
             except Exception:
                 logging.exception(
                     f"Failed to set up subscription for {device.device_name}"
@@ -95,7 +57,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
-    parser.add_argument("--slack-channel", help="Slack channel to post to")
     return parser.parse_args()
 
 
@@ -115,7 +76,7 @@ async def real_main() -> None:
     try:
         await wait(
             [
-                create_task(inner_loop(args.slack_channel)),
+                create_task(inner_loop()),
                 create_task(exit_event.wait()),
             ],
             return_when=FIRST_COMPLETED,

@@ -202,7 +202,7 @@ class _SniSslContext(SSLContext):
         )
 
 
-class BambuMqttSubscription(AbstractAsyncContextManager):
+class BambuMqttConnection(AbstractAsyncContextManager):
     def __init__(self, task_group: TaskGroup, device: BambuDevice) -> None:
         self.task_group = task_group
         self.ip = device.ip_address
@@ -218,7 +218,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
 
         self._cache = _Cache()
 
-        self._queues = list[Queue[tuple[BambuStatusReport, BambuStatusReport]]]()
+        self._queues = list[Queue[BambuStatusReport]]()
 
     @override
     async def __aenter__(self) -> Self:
@@ -244,9 +244,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
     @asynccontextmanager
     async def subscribe(
         self,
-    ) -> AsyncGenerator[
-        AsyncIterator[tuple[BambuStatusReport, BambuStatusReport]], None
-    ]:
+    ) -> AsyncGenerator[AsyncIterator[BambuStatusReport], None]:
         """
         Create an in-memory subscription to the MQTT topic.
 
@@ -256,7 +254,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
         subscription.
         """
 
-        queue = Queue[tuple[BambuStatusReport, BambuStatusReport]]()
+        queue = Queue[BambuStatusReport]()
         self._queues.append(queue)
         try:
             yield _consume_queue(queue)
@@ -289,7 +287,6 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
                     async for message in client.messages:
                         wrapper = self._parse_payload(message.payload)
                         if wrapper is not None:
-                            old = self._cache.print or BambuStatusReport()
                             self._cache = _Cache(
                                 print=wrapper.print,
                                 last_update=datetime.now(UTC),
@@ -297,7 +294,7 @@ class BambuMqttSubscription(AbstractAsyncContextManager):
                             )
                             for queue in self._queues:
                                 try:
-                                    queue.put_nowait((old, wrapper.print))
+                                    queue.put_nowait(wrapper.print)
                                 except QueueFull:
                                     logging.warning(
                                         "Dropping message due to full queue"
