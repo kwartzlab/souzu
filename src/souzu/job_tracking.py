@@ -96,7 +96,7 @@ async def _wait_for_job_completion(reports: AsyncIterable[BambuStatusReport]) ->
 async def _notify_job_started(job: PrintJob, device: BambuDevice) -> str | None:
     return await post_to_channel(
         SLACK_PRINT_NOTIFICATION_CHANNEL,
-        f"{device.device_name}: Print started, {_pretty_print(job.duration)} remaining",
+        f":progress_bar: {device.device_name}: Print started, {_pretty_print(job.duration)} remaining",
     )
 
 
@@ -106,13 +106,13 @@ async def _notify_job_completed(job: PrintJob, device: BambuDevice) -> None:
     await post_to_thread(
         SLACK_PRINT_NOTIFICATION_CHANNEL,
         job.slack_thread_ts,
-        f"{device.device_name}: Print finished!",
+        f":white_check_mark: {device.device_name}: Print finished!",
     )
     if job.slack_thread_ts:
         await edit_message(
             SLACK_PRINT_NOTIFICATION_CHANNEL,
             job.slack_thread_ts,
-            f"~~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~~\n\nFinished!",
+            f":white_check_mark: ~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n\nFinished!",
         )
 
 
