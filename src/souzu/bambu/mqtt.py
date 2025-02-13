@@ -20,7 +20,7 @@ from typing import Any, Self, cast, override
 from aiomqtt import Client, MqttError, TLSParameters
 from aiomqtt.types import PayloadType
 from anyio import Path as AsyncPath
-from attrs import Factory, frozen
+from attrs import Factory, field, frozen
 from cattrs import Converter, structure, unstructure
 from deepmerge.merger import Merger
 from deepmerge.strategy.core import STRATEGY_END
@@ -33,6 +33,14 @@ from souzu.config import BAMBU_ACCESS_CODES
 _CACHE_DIR = AsyncPath(xdg_cache_home() / "souzu")
 
 MQTT_ERROR_RECONNECT_DELAY = 30
+
+
+def _round_int(value: float | None) -> int | None:
+    """Round noisy floats to ints."""
+    if value is None:
+        return None
+    return int(round(value))
+
 
 # see more fields at https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md
 
@@ -89,7 +97,7 @@ class BambuStatusReport:
     ams: BambuAmsSummary | None = None
     aux_part_fan: bool | None = None
     bed_target_temper: float | None = None
-    bed_temper: float | None = None
+    bed_temper: int | None = field(converter=_round_int, default=None)
     big_fan1_speed: int | None = None  # aux fan
     big_fan2_speed: int | None = None  # chamber fan
     chamber_temper: float | None = None
@@ -111,7 +119,7 @@ class BambuStatusReport:
     mc_print_sub_stage: int | None = None
     mc_remaining_time: int | None = None  # in minutes
     nozzle_target_temper: float | None = None
-    nozzle_temper: float | None = None
+    nozzle_temper: int | None = field(converter=_round_int, default=None)
     print_error: int | None = None
     print_gcode_action: int | None = None
     print_real_action: int | None = None
@@ -120,7 +128,8 @@ class BambuStatusReport:
     sdcard: bool | None = None
     total_layer_num: int | None = None
     upload: BambuUploadReport | None = None
-    wifi_signal: str | None = None
+    # wifi_signal: str | None = None  # not captured, too noisy and not useful for us
+    # if wifi isn't working, the printer can't tell us
 
 
 @frozen
