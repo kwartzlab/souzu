@@ -16,20 +16,15 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 from types import FrameType
 
-from prettyprinter import install_extras, pformat
+from prettyprinter import install_extras
+from xdg_base_dirs import xdg_cache_home
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttConnection
 from souzu.job_tracking import monitor_printer_status
+from souzu.logs import log_reports
 
-
-async def log_messages(device: BambuDevice, subscription: BambuMqttConnection) -> None:
-    try:
-        async with subscription.subscribe() as messages:
-            async for message in messages:
-                logging.debug(f"{device.device_name}: {pformat(message)}")
-    except Exception:
-        logging.exception(f"Logger task failed for {device.device_name}")
+LOG_DIRECTORY = xdg_cache_home() / "souzu/logs"
 
 
 async def inner_loop() -> None:
@@ -43,7 +38,11 @@ async def inner_loop() -> None:
                 connection = await stack.enter_async_context(
                     BambuMqttConnection(tg, device)
                 )
-                tg.create_task(log_messages(device, connection))
+                tg.create_task(
+                    log_reports(
+                        device, connection, LOG_DIRECTORY / f"{device.device_id}.log"
+                    )
+                )
                 tg.create_task(monitor_printer_status(device, connection))
             except Exception:
                 logging.exception(

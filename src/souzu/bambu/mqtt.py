@@ -173,11 +173,9 @@ _MERGER = Merger(
     ["override"],
 )
 
-_CACHE_SERIALIZER = Converter()
-_CACHE_SERIALIZER.register_unstructure_hook(datetime, lambda dt: dt.isoformat())
-_CACHE_SERIALIZER.register_structure_hook(
-    datetime, lambda dt, _: datetime.fromisoformat(dt)
-)
+SERIALIZER = Converter()
+SERIALIZER.register_unstructure_hook(datetime, lambda dt: dt.isoformat())
+SERIALIZER.register_structure_hook(datetime, lambda dt, _: datetime.fromisoformat(dt))
 
 
 class _SniSslContext(SSLContext):
@@ -344,12 +342,12 @@ class BambuMqttConnection(AbstractAsyncContextManager):
             async with await cache_file.open('r') as f:
                 cache_str = json.loads(await f.read())
                 logging.info(f"Loading cache file {cache_file}")
-                self._cache = _CACHE_SERIALIZER.structure(cache_str, _Cache)
+                self._cache = SERIALIZER.structure(cache_str, _Cache)
 
         try:
             yield
         finally:
-            serialized = json.dumps(_CACHE_SERIALIZER.unstructure(self._cache))
+            serialized = json.dumps(SERIALIZER.unstructure(self._cache))
             async with await cache_file.open('w') as f:
                 await f.write(serialized)
                 logging.info(f"Saved cache file {cache_file}")
