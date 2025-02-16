@@ -51,7 +51,8 @@ class BambuAmsSlot:
     cols: list[str] = Factory(list)
     nozzle_temp_max: float | None = None
     nozzle_temp_min: float | None = None
-    tag_uid: str | None = None
+    # tag_uid: str | None = None  # not captured, for privacy
+    # we may consider capturing this in limited cases (e.g. by limiting it to lab spools)
     tray_color: str | None = None
     tray_info_idx: str | None = None
     tray_type: str | None = None
@@ -84,7 +85,7 @@ class BambuUploadReport:
     file_size: int | None = None
     finish_size: int | None = None
     message: str | None = None
-    # oss_url: str | None = None  # deliberately not captured, for privacy
+    # oss_url: str | None = None  # not captured, for privacy
     progress: int | None = None
     speed: int | None = None
     status: str | None = None
@@ -104,7 +105,7 @@ class BambuStatusReport:
     cooling_fan_speed: int | None = None
     fail_reason: int | None = None
     fan_gear: int | None = None
-    # gcode_file: str | None = None  # deliberately not captured, for privacy
+    # gcode_file: str | None = None  # not captured, for privacy
     gcode_file_prepare_percent: int | None = None
     gcode_start_time: int | None = None
     gcode_state: str | None = (
