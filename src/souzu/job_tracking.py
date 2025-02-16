@@ -11,6 +11,7 @@ from cattrs import Converter
 from xdg_base_dirs import xdg_state_home
 
 from souzu.bambu.discovery import BambuDevice
+from souzu.bambu.errors import parse_error_code
 from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
 from souzu.config import SLACK_PRINT_NOTIFICATION_CHANNEL
 from souzu.slack.thread import (
@@ -82,15 +83,26 @@ async def _wait_for_job(reports: AsyncIterable[BambuStatusReport]) -> PrintJob:
     Consume messages from the queue until a job is running with estimated time available.
     """
     async for report in reports:
-        if report.print_type != 'idle' and report.mc_remaining_time:
+        if report.gcode_state == 'RUNNING' and report.mc_remaining_time:
             return PrintJob(duration=timedelta(minutes=report.mc_remaining_time))
     raise CancelledError("No print job found")
 
 
-async def _wait_for_job_completion(reports: AsyncIterable[BambuStatusReport]) -> None:
-    async for message in reports:
-        if message.print_type == 'idle':
-            return
+async def _wait_for_job_completion(
+    reports: AsyncIterable[BambuStatusReport],
+) -> str | None:
+    """
+    Wait until the print job completes or errors.
+
+    If the print job completes, return None.
+    If the print job has an error, return a human-readable error message, or the error code, or some other string.
+    """
+    async for report in reports:
+        if report.gcode_state == 'FAILED':
+            return parse_error_code(report.print_error)
+        elif report.gcode_state == 'FINISH':
+            return None
+    raise CancelledError("Job completion not found")
 
 
 async def _notify_job_started(job: PrintJob, device: BambuDevice) -> str | None:
@@ -112,7 +124,21 @@ async def _notify_job_completed(job: PrintJob, device: BambuDevice) -> None:
         await edit_message(
             SLACK_PRINT_NOTIFICATION_CHANNEL,
             job.slack_thread_ts,
-            f":white_check_mark: ~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n\nFinished!",
+            f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:white_check_mark: Finished!",
+        )
+
+
+async def _notify_job_error(job: PrintJob, device: BambuDevice, error: str) -> None:
+    await post_to_thread(
+        SLACK_PRINT_NOTIFICATION_CHANNEL,
+        job.slack_thread_ts,
+        f":x: {device.device_name}: Print failed!\nMessage from printer: {error}",
+    )
+    if job.slack_thread_ts:
+        await edit_message(
+            SLACK_PRINT_NOTIFICATION_CHANNEL,
+            job.slack_thread_ts,
+            f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:x: Failed!",
         )
 
 
@@ -148,11 +174,19 @@ async def monitor_printer_status(
                         except SlackApiError as e:
                             logging.error(f"Failed to notify job started: {e}")
                     else:
-                        await _wait_for_job_completion(reports)
-                        try:
-                            await _notify_job_completed(state.current_job, device)
-                        except SlackApiError as e:
-                            logging.error(f"Failed to notify job completed: {e}")
+                        error = await _wait_for_job_completion(reports)
+                        if error:
+                            try:
+                                await _notify_job_error(
+                                    state.current_job, device, error
+                                )
+                            except SlackApiError as e:
+                                logging.error(f"Failed to notify job error: {e}")
+                        else:
+                            try:
+                                await _notify_job_completed(state.current_job, device)
+                            except SlackApiError as e:
+                                logging.error(f"Failed to notify job completed: {e}")
                         state.current_job = None
         finally:
             serialized = json.dumps(_STATE_SERIALIZER.unstructure(state))
