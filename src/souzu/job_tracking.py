@@ -42,6 +42,7 @@ _STATE_SERIALIZER.register_structure_hook(
 @define
 class PrintJob:
     duration: timedelta
+    slack_channel: str | None = None
     slack_thread_ts: str | None = None
 
 
@@ -105,41 +106,75 @@ async def _wait_for_job_completion(
     raise CancelledError("Job completion not found")
 
 
-async def _notify_job_started(job: PrintJob, device: BambuDevice) -> str | None:
-    return await post_to_channel(
-        SLACK_PRINT_NOTIFICATION_CHANNEL,
-        f":progress_bar: {device.device_name}: Print started, {_pretty_print(job.duration)} remaining",
-    )
+async def _notify_job_started(job: PrintJob, device: BambuDevice) -> None:
+    try:
+        thread_ts = await post_to_channel(
+            SLACK_PRINT_NOTIFICATION_CHANNEL,
+            f":progress_bar: {device.device_name}: Print started, {_pretty_print(job.duration)} remaining",
+        )
+        job.slack_channel = SLACK_PRINT_NOTIFICATION_CHANNEL
+        job.slack_thread_ts = thread_ts
+    except SlackApiError as e:
+        logging.error(f"Failed to notify channel: {e}")
+
+
+async def _update_thread(
+    job: PrintJob, device: BambuDevice, edited_message: str, update_message: str
+) -> None:
+    if job.slack_thread_ts is None:
+        try:
+            await post_to_channel(
+                job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+                update_message,
+            )
+        except SlackApiError as e:
+            logging.error(f"Failed to notify channel: {e}")
+        return
+
+    try:
+        await post_to_thread(
+            job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+            job.slack_thread_ts,
+            update_message,
+        )
+    except SlackApiError as e:
+        logging.error(f"Failed to notify thread: {e}")
+        if job.slack_thread_ts:
+            # we tried to post to thread, we can try posting to the channel instead
+            try:
+                await post_to_channel(
+                    job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+                    update_message,
+                )
+            except SlackApiError as e:
+                logging.error(f"Failed to notify channel as fallback: {e}")
+    try:
+        await edit_message(
+            job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+            job.slack_thread_ts,
+            edited_message,
+        )
+    except SlackApiError as e:
+        logging.error(f"Failed to edit message: {e}")
 
 
 async def _notify_job_completed(job: PrintJob, device: BambuDevice) -> None:
-    # TODO detect failed prints and report them
     # TODO detect paused prints
-    await post_to_thread(
-        SLACK_PRINT_NOTIFICATION_CHANNEL,
-        job.slack_thread_ts,
+    await _update_thread(
+        job,
+        device,
+        f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:white_check_mark: Finished!",
         f":white_check_mark: {device.device_name}: Print finished!",
     )
-    if job.slack_thread_ts:
-        await edit_message(
-            SLACK_PRINT_NOTIFICATION_CHANNEL,
-            job.slack_thread_ts,
-            f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:white_check_mark: Finished!",
-        )
 
 
 async def _notify_job_error(job: PrintJob, device: BambuDevice, error: str) -> None:
-    await post_to_thread(
-        SLACK_PRINT_NOTIFICATION_CHANNEL,
-        job.slack_thread_ts,
+    await _update_thread(
+        job,
+        device,
+        f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:x: Failed!",
         f":x: {device.device_name}: Print failed!\nMessage from printer: {error}",
     )
-    if job.slack_thread_ts:
-        await edit_message(
-            SLACK_PRINT_NOTIFICATION_CHANNEL,
-            job.slack_thread_ts,
-            f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:x: Failed!",
-        )
 
 
 async def monitor_printer_status(
@@ -166,27 +201,13 @@ async def monitor_printer_status(
                 while True:
                     if state.current_job is None:
                         state.current_job = await _wait_for_job(reports)
-                        try:
-                            thread_ts = await _notify_job_started(
-                                state.current_job, device
-                            )
-                            state.current_job.slack_thread_ts = thread_ts
-                        except SlackApiError as e:
-                            logging.error(f"Failed to notify job started: {e}")
+                        await _notify_job_started(state.current_job, device)
                     else:
                         error = await _wait_for_job_completion(reports)
                         if error:
-                            try:
-                                await _notify_job_error(
-                                    state.current_job, device, error
-                                )
-                            except SlackApiError as e:
-                                logging.error(f"Failed to notify job error: {e}")
+                            await _notify_job_error(state.current_job, device, error)
                         else:
-                            try:
-                                await _notify_job_completed(state.current_job, device)
-                            except SlackApiError as e:
-                                logging.error(f"Failed to notify job completed: {e}")
+                            await _notify_job_completed(state.current_job, device)
                         state.current_job = None
         finally:
             serialized = json.dumps(_STATE_SERIALIZER.unstructure(state))

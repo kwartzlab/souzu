@@ -35,18 +35,14 @@ async def post_to_channel(channel: str | None, message: str) -> str | None:
 
 
 async def post_to_thread(
-    channel: str | None, thread_ts: str | None, message: str
+    channel: str | None, thread_ts: str, message: str
 ) -> str | None:
     """
     Post a message to a thread.
 
     Return the timestamp of the message (if available) to use for editing.
-
-    If thread_ts is None, behave as post_to_channel.
     """
     try:
-        if thread_ts is None:
-            return await post_to_channel(channel, message)
         if channel is None:
             logging.debug(f"No channel to post message: {message}")
             return None
