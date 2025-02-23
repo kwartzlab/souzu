@@ -2,9 +2,13 @@ import logging
 
 from slack_sdk.web.async_client import AsyncWebClient
 
-from souzu.config import SLACK_ACCESS_TOKEN
+from souzu.config import CONFIG
 
-_CLIENT = AsyncWebClient(token=SLACK_ACCESS_TOKEN)
+_CLIENT = (
+    AsyncWebClient(token=CONFIG.slack.access_token)
+    if CONFIG.slack.access_token
+    else None
+)
 
 
 class SlackApiError(Exception):
@@ -18,6 +22,8 @@ async def post_to_channel(channel: str | None, message: str) -> str | None:
     Return the timestamp of the message (if available) to use for editing or threading.
     """
     try:
+        if _CLIENT is None:
+            raise SlackApiError("No Slack API token configured")
         if channel is None:
             logging.debug(f"No channel to post message: {message}")
             return None
@@ -43,6 +49,8 @@ async def post_to_thread(
     Return the timestamp of the message (if available) to use for editing.
     """
     try:
+        if _CLIENT is None:
+            raise SlackApiError("No Slack API token configured")
         if channel is None:
             logging.debug(f"No channel to post message: {message}")
             return None
@@ -65,6 +73,8 @@ async def edit_message(channel: str | None, message_ts: str, message: str) -> No
     Edit a message.
     """
     try:
+        if _CLIENT is None:
+            raise SlackApiError("No Slack API token configured")
         if channel is None:
             logging.debug(f"No channel to edit message: {message_ts}")
             return

@@ -28,7 +28,7 @@ from xdg_base_dirs import xdg_cache_home
 
 from souzu.bambu import res
 from souzu.bambu.discovery import BambuDevice
-from souzu.config import BAMBU_ACCESS_CODES
+from souzu.config import CONFIG
 
 _CACHE_DIR = AsyncPath(xdg_cache_home() / "souzu")
 
@@ -214,10 +214,13 @@ class BambuMqttConnection(AbstractAsyncContextManager):
     def __init__(self, task_group: TaskGroup, device: BambuDevice) -> None:
         self.task_group = task_group
         self.ip = device.ip_address
-        self.device_id = device.device_id
-        self.access_code = BAMBU_ACCESS_CODES.get(device.device_id)
-        if not self.access_code:
-            raise ValueError(f"No access code for device {device.device_id}")
+        self.device = device
+        printer_config = CONFIG.printers.get(device.device_id)
+        if not printer_config or not printer_config.access_code:
+            raise ValueError(
+                f"No access code for device {device.device_id} ({device.device_name})"
+            )
+        self.access_code = printer_config.access_code
 
         self._stack = AsyncExitStack()
         self._ca_path: Path | None = None
@@ -286,12 +289,12 @@ class BambuMqttConnection(AbstractAsyncContextManager):
             # patch to send device id in SNI, and fix cert validation
             assert client._client._ssl_context is not None
             client._client._ssl_context = _SniSslContext(
-                self.device_id, client._client._ssl_context
+                self.device.device_id, client._client._ssl_context
             )
 
             try:
                 async with client:
-                    await client.subscribe(f"device/{self.device_id}/report")
+                    await client.subscribe(f"device/{self.device.device_id}/report")
                     async for message in client.messages:
                         wrapper = self._parse_payload(message.payload)
                         if wrapper is not None:
@@ -337,7 +340,7 @@ class BambuMqttConnection(AbstractAsyncContextManager):
         will be saved.
         """
         await _CACHE_DIR.mkdir(exist_ok=True, parents=True)
-        cache_file = _CACHE_DIR / f'mqtt.{self.device_id}.json'
+        cache_file = _CACHE_DIR / f'mqtt.{self.device.filename_prefix}.json'
         if await cache_file.exists():
             async with await cache_file.open('r') as f:
                 cache_str = json.loads(await f.read())

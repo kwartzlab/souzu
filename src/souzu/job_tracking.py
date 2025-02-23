@@ -13,7 +13,7 @@ from xdg_base_dirs import xdg_state_home
 from souzu.bambu.discovery import BambuDevice
 from souzu.bambu.errors import parse_error_code
 from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
-from souzu.config import SLACK_PRINT_NOTIFICATION_CHANNEL
+from souzu.config import CONFIG
 from souzu.slack.thread import (
     SlackApiError,
     edit_message,
@@ -151,10 +151,10 @@ async def _notify_job_started(job: PrintJob, device: BambuDevice) -> None:
         eta = _format_eta(job.duration)
         job.start_message = f"{device.device_name}: Print started, {eta.duration}, done around {eta.finish_time}"
         thread_ts = await post_to_channel(
-            SLACK_PRINT_NOTIFICATION_CHANNEL,
+            CONFIG.slack.print_notification_channel,
             f":progress_bar: {job.start_message}",
         )
-        job.slack_channel = SLACK_PRINT_NOTIFICATION_CHANNEL
+        job.slack_channel = CONFIG.slack.print_notification_channel
         job.slack_thread_ts = thread_ts
     except SlackApiError as e:
         logging.error(f"Failed to notify channel: {e}")
@@ -166,7 +166,7 @@ async def _update_thread(
     if job.slack_thread_ts is None:
         try:
             await post_to_channel(
-                job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+                job.slack_channel or CONFIG.slack.print_notification_channel,
                 update_message,
             )
         except SlackApiError as e:
@@ -175,7 +175,7 @@ async def _update_thread(
 
     try:
         await post_to_thread(
-            job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+            job.slack_channel or CONFIG.slack.print_notification_channel,
             job.slack_thread_ts,
             update_message,
         )
@@ -185,14 +185,14 @@ async def _update_thread(
             # we tried to post to thread, we can try posting to the channel instead
             try:
                 await post_to_channel(
-                    job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+                    job.slack_channel or CONFIG.slack.print_notification_channel,
                     update_message,
                 )
             except SlackApiError as e:
                 logging.error(f"Failed to notify channel as fallback: {e}")
     try:
         await edit_message(
-            job.slack_channel or SLACK_PRINT_NOTIFICATION_CHANNEL,
+            job.slack_channel or CONFIG.slack.print_notification_channel,
             job.slack_thread_ts,
             edited_message,
         )
@@ -230,7 +230,7 @@ async def monitor_printer_status(
     """
     try:
         await _STATE_DIR.mkdir(exist_ok=True, parents=True)
-        state_file = _STATE_DIR / f'job.{device.device_id}.json'
+        state_file = _STATE_DIR / f'job.{device.filename_prefix}.json'
         if await state_file.exists():
             async with await state_file.open('r') as f:
                 state_str = json.loads(await f.read())
@@ -273,4 +273,6 @@ async def monitor_printer_status(
     except CancelledError:
         raise
     except Exception:
-        logging.exception(f"Error while monitoring printer {device.device_id}")
+        logging.exception(
+            f"Error while monitoring printer {device.device_id} ({device.device_name})"
+        )

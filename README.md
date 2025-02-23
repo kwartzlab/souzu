@@ -13,9 +13,15 @@ Put a configuration file in `~/.config/souzu.json`:
 
 ```json
 {
-  "bambu_access_codes": {
-    "PRINTER_SERIAL_NUMBER": "ACCESS_CODE",
-    "OTHER_PRINTER_SERIAL_NUMBER": "ACCESS_CODE"
+  "printers": {
+    "PRINTER_SERIAL_NUMBER": {
+      "access_code": "ACCESS_CODE",
+      "filename_prefix": "prefix for log file names (optional)"
+    },
+    "OTHER_PRINTER_SERIAL_NUMBER": {
+      "access_code": "ACCESS_CODE",
+      "ip_address": "hardcoded ip address (optional)"
+    }
   },
   "slack": {
     "access_token": "SLACK_ACCESS_TOKEN",

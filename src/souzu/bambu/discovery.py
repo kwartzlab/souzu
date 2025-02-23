@@ -10,6 +10,8 @@ from requests.structures import CaseInsensitiveDict
 from ssdp.aio import SimpleServiceDiscoveryProtocol
 from ssdp.messages import SSDPRequest, SSDPResponse
 
+from souzu.config import CONFIG
+
 BAMBU_DISCOVERY_PORT = 2021
 
 
@@ -18,6 +20,7 @@ class BambuDevice:
     device_id: str
     device_name: str
     ip_address: str
+    filename_prefix: str
 
 
 async def discover_bambu_devices(
@@ -51,10 +54,27 @@ async def discover_bambu_devices(
                 if serial_number in found_ids:
                     return
                 if ip_address and serial_number:
+                    filename_prefix = serial_number
+                    logging.info(
+                        f"Found device {serial_number} at {ip_address} ({device_name})"
+                    )
+                    device_config = CONFIG.printers.get(serial_number)
+                    if device_config:
+                        if (
+                            device_config.ip_address
+                            and device_config.ip_address != ip_address
+                        ):
+                            logging.warning(
+                                f"Discovered device {serial_number} at {ip_address}, but config"
+                                f" has {device_config.ip_address} (connecting to {ip_address})"
+                            )
+                        if device_config.filename_prefix:
+                            filename_prefix = device_config.filename_prefix
                     device = BambuDevice(
                         device_id=serial_number,
                         device_name=device_name or serial_number,
                         ip_address=ip_address,
+                        filename_prefix=filename_prefix,
                     )
                     discovered_device_queue.put_nowait(device)
                     found_ids.add(serial_number)

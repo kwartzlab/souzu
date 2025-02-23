@@ -40,7 +40,9 @@ async def inner_loop() -> None:
                 )
                 tg.create_task(
                     log_reports(
-                        device, connection, LOG_DIRECTORY / f"{device.device_id}.log"
+                        device,
+                        connection,
+                        LOG_DIRECTORY / f"{device.filename_prefix}.log",
                     )
                 )
                 tg.create_task(monitor_printer_status(device, connection))
