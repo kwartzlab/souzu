@@ -2,11 +2,11 @@ import json
 import logging
 from collections.abc import AsyncIterable
 from concurrent.futures import CancelledError
-from datetime import timedelta
+from datetime import datetime, timedelta
 from math import ceil
 
 from anyio import Path as AsyncPath
-from attrs import define
+from attrs import define, frozen
 from cattrs import Converter
 from xdg_base_dirs import xdg_state_home
 
@@ -21,12 +21,15 @@ from souzu.slack.thread import (
     post_to_thread,
 )
 
-_ONE_MINUTE = 60
-_FIVE_MINUTES = 5 * 60
-_HALF_HOUR = 30 * 60
-_FIFTY_FIVE_MINUTES = 55 * 60
-_ONE_HOUR = 60 * 60
-_EIGHT_HOURS = 8 * 60 * 60
+_ONE_MINUTE = timedelta(minutes=1)
+_FIVE_MINUTES = timedelta(minutes=5)
+_HALF_HOUR = timedelta(minutes=30)
+_FIFTY_FIVE_MINUTES = timedelta(minutes=55)
+_ONE_HOUR = timedelta(hours=1)
+_EIGHT_HOURS = timedelta(hours=8)
+
+_TIME_FORMAT = '%I:%M %p'
+_DATE_TIME_FORMAT = '%A at %I:%M %p'
 
 
 _STATE_DIR = AsyncPath(xdg_state_home() / 'souzu')
@@ -44,6 +47,7 @@ class PrintJob:
     duration: timedelta
     slack_channel: str | None = None
     slack_thread_ts: str | None = None
+    start_message: str | None = None
 
 
 @define
@@ -51,32 +55,68 @@ class PrinterState:
     current_job: PrintJob | None = None
 
 
-def _pretty_print(duration: timedelta) -> str:
+def _round_up(time: datetime, unit: timedelta) -> datetime:
     """
-    Return a human-readable string representing the duration of the print job.
+    Round up the given time to the next multiple of the given unit.
+    """
+
+    start_of_day = time.replace(hour=0, minute=0, second=0, microsecond=0)
+    seconds = (time - start_of_day).total_seconds()
+    return start_of_day + unit * ceil(seconds / unit.total_seconds())
+
+
+@frozen
+class Eta:
+    duration: str
+    finish_time: str
+
+
+def _format_eta(duration: timedelta) -> Eta:
+    """
+    Return a human-readable string representing the duration and finish time of the print job.
 
     Add a fudge factor to account for estimation error.
     """
 
-    if duration.total_seconds() < _ONE_MINUTE:
-        return "1 minute"
-    elif duration.total_seconds() < _FIFTY_FIVE_MINUTES:
+    finish_time = datetime.now() + duration
+
+    if duration < _ONE_MINUTE:
+        return Eta(
+            duration="1 minute",
+            finish_time=_round_up(finish_time, _ONE_MINUTE).strftime(_TIME_FORMAT),
+        )
+    elif duration < _FIFTY_FIVE_MINUTES:
         # round up to next 5 minutes
-        minutes = ceil(duration.total_seconds() / _FIVE_MINUTES) * 5
-        return f"{minutes} minutes"
-    elif duration.total_seconds() < _EIGHT_HOURS:
+        minutes = ceil(duration / _FIVE_MINUTES) * 5
+        return Eta(
+            duration=f"{minutes} minutes",
+            finish_time=_round_up(finish_time, _FIVE_MINUTES).strftime(_TIME_FORMAT),
+        )
+    elif duration < _EIGHT_HOURS:
         # round up to next half hour
-        hours = ceil(duration.total_seconds() / _HALF_HOUR) / 2
+        hours = ceil(duration / _HALF_HOUR) / 2
         if hours == 1:
-            return "1 hour"
+            hours_str = "1 hour"
         elif hours.is_integer():
-            return f"{int(hours)} hours"
+            hours_str = f"{int(hours)} hours"
         else:
-            return f"{hours:.1f} hours"
+            hours_str = f"{hours:.1f} hours"
+        return Eta(
+            duration=hours_str,
+            finish_time=_round_up(finish_time, _HALF_HOUR).strftime(_TIME_FORMAT),
+        )
     else:
         # round up to next hour
-        hours = int(ceil(duration.total_seconds() / _ONE_HOUR))
-        return f"{hours} hours"
+        hours = int(ceil(duration / _ONE_HOUR))
+        rounded_finish_time = _round_up(finish_time, _ONE_HOUR)
+        if rounded_finish_time.date != datetime.now().date:
+            finish_str = rounded_finish_time.strftime(_DATE_TIME_FORMAT)
+        else:
+            finish_str = rounded_finish_time.strftime(_TIME_FORMAT)
+        return Eta(
+            duration=f"{hours} hours",
+            finish_time=finish_str,
+        )
 
 
 async def _wait_for_job(reports: AsyncIterable[BambuStatusReport]) -> PrintJob:
@@ -108,9 +148,11 @@ async def _wait_for_job_completion(
 
 async def _notify_job_started(job: PrintJob, device: BambuDevice) -> None:
     try:
+        eta = _format_eta(job.duration)
+        job.start_message = f"{device.device_name}: Print started, {eta.duration}, done around {eta.finish_time}"
         thread_ts = await post_to_channel(
             SLACK_PRINT_NOTIFICATION_CHANNEL,
-            f":progress_bar: {device.device_name}: Print started, {_pretty_print(job.duration)} remaining",
+            f":progress_bar: {job.start_message}",
         )
         job.slack_channel = SLACK_PRINT_NOTIFICATION_CHANNEL
         job.slack_thread_ts = thread_ts
@@ -158,22 +200,23 @@ async def _update_thread(
         logging.error(f"Failed to edit message: {e}")
 
 
-async def _notify_job_completed(job: PrintJob, device: BambuDevice) -> None:
-    # TODO detect paused prints
-    await _update_thread(
-        job,
-        device,
-        f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:white_check_mark: Finished!",
-        f":white_check_mark: {device.device_name}: Print finished!",
+async def _update_job(
+    job: PrintJob,
+    device: BambuDevice,
+    emoji: str,
+    short_message: str,
+    long_message: str | None = None,
+) -> None:
+    emoji = ":white_check_mark:"
+    update_prefix = f"{emoji} {device.device_name}: "
+    edit_prefix = (
+        f"~{job.start_message}~\n{emoji} " if job.start_message else update_prefix
     )
-
-
-async def _notify_job_error(job: PrintJob, device: BambuDevice, error: str) -> None:
     await _update_thread(
         job,
         device,
-        f"~{device.device_name}: Print started, {_pretty_print(job.duration)} remaining~\n:x: Failed!",
-        f":x: {device.device_name}: Print failed!\nMessage from printer: {error}",
+        f"{edit_prefix}{short_message}",
+        f"{update_prefix}{long_message or short_message}",
     )
 
 
@@ -203,11 +246,24 @@ async def monitor_printer_status(
                         state.current_job = await _wait_for_job(reports)
                         await _notify_job_started(state.current_job, device)
                     else:
+                        # TODO detect paused prints
                         error = await _wait_for_job_completion(reports)
                         if error:
-                            await _notify_job_error(state.current_job, device, error)
+                            await _update_job(
+                                state.current_job,
+                                device,
+                                ":x:",
+                                "Failed!",
+                                f"Print failed!\nMessage from printer: {error}",
+                            )
                         else:
-                            await _notify_job_completed(state.current_job, device)
+                            await _update_job(
+                                state.current_job,
+                                device,
+                                ":white_check_mark:",
+                                "Finished!",
+                                "Print finished!",
+                            )
                         state.current_job = None
         finally:
             serialized = json.dumps(_STATE_SERIALIZER.unstructure(state))
