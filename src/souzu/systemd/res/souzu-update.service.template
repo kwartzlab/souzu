@@ -1,0 +1,8 @@
+[Unit]
+Description=Souzu self-updater
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={souzu_path} update --restart
+Restart=no

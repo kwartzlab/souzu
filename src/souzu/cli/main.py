@@ -1,5 +1,6 @@
 import argparse
 import logging
+import sys
 from asyncio import (
     run,
 )
@@ -29,7 +30,10 @@ def _parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command")
     subparsers.required = True
     subparsers.add_parser("monitor", help="Monitor printers on the local network")
-    subparsers.add_parser("update", help="Update souzu")
+    update_subparser = subparsers.add_parser("update", help="Update souzu")
+    update_subparser.add_argument(
+        "--restart", action="store_true", help="Restart the monitor service"
+    )
     subparsers.add_parser("install", help="Install systemd user service")
     return parser.parse_args()
 
@@ -41,12 +45,16 @@ def main() -> None:
     if args.command == "monitor":
         run(monitor())
     elif args.command == "update":
-        update_successful = update()
-        if not update_successful:
+        try:
+            update(args.restart)
+        except Exception as e:
+            print(f"Error updating: {e}", file=sys.stderr)  # noqa: T201
             exit(1)
     elif args.command == "install":
-        install_successful = install()
-        if not install_successful:
+        try:
+            install()
+        except Exception as e:
+            print(f"Error installing: {e}", file=sys.stderr)  # noqa: T201
             exit(1)
     else:
         raise NotImplementedError(f"Unknown command {args.command}")

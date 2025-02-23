@@ -43,15 +43,28 @@ uv tool install git+https://github.com/kwartzlab/souzu
 
 Then run `souzu monitor` to start the service.
 
-To install a systemd user service that runs the service on boot and restarts it if it crashes:
+### Updating
+
+Souzu includes a simple self-updater that wraps uv. Run `souzu update` to update to the latest version.
+
+### Systemd service
+
+Souzu includes definitions for several systemd units, which can be installed with `souzu install`.
+
+To enable a service that runs the Souzu monitor service on boot:
 
 ```sh
-souzu install
-systemctl --user enable souzu.service
-systemctl --user start souzu.service  # if you want to start the service immediately
+systemctl --user enable souzu-monitor.service
+systemctl --user start souzu-monitor.service  # if you want to start the service immediately
 ```
 
-A simple self-updater is included, so if you installed this tool using `uv`, you can run `souzu update` to update to the latest version.
+To enable a service that automatically updates and restarts Souzu, checking for updates every 5 minutes:
+
+```sh
+systemctl --user enable --now souzu-update.timer
+```
+
+(yes, checking for updates every 5 minutes is excessive, but we're using it as a poor man's continuous deployment)
 
 ## Developing
 
