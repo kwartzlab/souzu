@@ -1,4 +1,3 @@
-import argparse
 import logging
 import signal
 from asyncio import (
@@ -9,14 +8,12 @@ from asyncio import (
     TaskGroup,
     create_task,
     get_running_loop,
-    run,
     wait,
 )
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from types import FrameType
 
-from prettyprinter import install_extras
 from xdg_base_dirs import xdg_cache_home
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
@@ -53,18 +50,7 @@ async def inner_loop() -> None:
             queue.task_done()
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Enable verbose logging"
-    )
-    return parser.parse_args()
-
-
-async def real_main() -> None:
-    args = _parse_args()
-    install_extras(frozenset({'attrs'}))
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+async def monitor() -> None:
     loop = get_running_loop()
     exit_event = Event()
 
@@ -87,11 +73,3 @@ async def real_main() -> None:
     finally:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.remove_signal_handler(sig)
-
-
-def main() -> None:
-    run(real_main())
-
-
-if __name__ == "__main__":
-    main()

@@ -31,13 +31,19 @@ Put a configuration file in `~/.config/souzu.json`:
 }
 ```
 
-## Running
+## Installation
 
-Install [uv](https://github.com/astral-sh/uv). To run:
+Install [uv](https://github.com/astral-sh/uv).
+
+To install from GitHub:
 
 ```sh
-uv run souzu
+uv tool install git+https://github.com/kwartzlab/souzu
 ```
+
+Then run `souzu monitor` to start the service.
+
+A simple self-updater is included, so if you installed this tool using `uv`, you can run `souzu update` to update to the latest version.
 
 ## Developing
 
@@ -47,6 +53,12 @@ To install git pre-commit hooks for linting and formatting:
 
 ```sh
 ./install-hooks.sh
+```
+
+To run from the source tree:
+
+```sh
+uv run souzu
 ```
 
 To build and install locally:

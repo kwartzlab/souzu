@@ -21,7 +21,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.scripts]
-souzu = 'souzu.cli.basic:main'
+souzu = 'souzu.cli.main:main'
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
