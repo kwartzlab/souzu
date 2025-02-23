@@ -207,7 +207,6 @@ async def _update_job(
     short_message: str,
     long_message: str | None = None,
 ) -> None:
-    emoji = ":white_check_mark:"
     update_prefix = f"{emoji} {device.device_name}: "
     edit_prefix = (
         f"~{job.start_message}~\n{emoji} " if job.start_message else update_prefix
