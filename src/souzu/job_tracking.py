@@ -78,7 +78,7 @@ def _format_eta(duration: timedelta) -> Eta:
     Add a fudge factor to account for estimation error.
     """
 
-    finish_time = datetime.now() + duration
+    finish_time = datetime.now(tz=CONFIG.timezone) + duration
 
     if duration < _ONE_MINUTE:
         return Eta(

@@ -1,10 +1,25 @@
 import json
+import logging
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from attrs import frozen
-from cattrs import structure
+from cattrs import Converter
 from xdg_base_dirs import xdg_config_home
 
 _CONFIG_FILE = xdg_config_home() / "souzu.json"
+
+
+def _convert_timezone(tz_str: str, _: type[ZoneInfo]) -> ZoneInfo:
+    """Convert timezone string to ZoneInfo, falling back to UTC on invalid input."""
+    try:
+        return ZoneInfo(tz_str)
+    except ZoneInfoNotFoundError:
+        logging.warning(f"Invalid timezone {tz_str}, falling back to UTC")
+        return ZoneInfo('UTC')
+
+
+SERIALIZER = Converter()
+SERIALIZER.register_structure_hook(ZoneInfo, _convert_timezone)
 
 
 @frozen
@@ -25,6 +40,7 @@ class SlackConfig:
 class Config:
     printers: dict[str, PrinterConfig] = {}
     slack: SlackConfig = SlackConfig()
+    timezone: ZoneInfo = ZoneInfo("UTC")
 
 
 CONFIG = Config()
@@ -32,4 +48,4 @@ CONFIG = Config()
 if _CONFIG_FILE.exists():
     with _CONFIG_FILE.open('r') as f:
         config_dict = json.load(f)
-        CONFIG = structure(config_dict, Config)
+        CONFIG = SERIALIZER.structure(config_dict, Config)
