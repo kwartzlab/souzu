@@ -29,7 +29,7 @@ _ONE_HOUR = timedelta(hours=1)
 _EIGHT_HOURS = timedelta(hours=8)
 
 _TIME_FORMAT = '%I:%M %p'
-_DATE_TIME_FORMAT = '%A at %I:%M %p'
+_DATE_TIME_FORMAT = '%I:%M %p on %A'
 
 
 _STATE_DIR = AsyncPath(xdg_state_home() / 'souzu')
@@ -71,6 +71,20 @@ class Eta:
     finish_time: str
 
 
+def _format_time(time: datetime) -> str:
+    """
+    Format a datetime object as a time string like 9:32 AM.
+    """
+    return time.strftime(_TIME_FORMAT).lstrip('0')
+
+
+def _format_date_time(time: datetime) -> str:
+    """
+    Format a datetime object as a date and time string like 9:32 AM on Monday.
+    """
+    return time.strftime(_DATE_TIME_FORMAT).lstrip('0')
+
+
 def _format_eta(duration: timedelta) -> Eta:
     """
     Return a human-readable string representing the duration and finish time of the print job.
@@ -83,14 +97,14 @@ def _format_eta(duration: timedelta) -> Eta:
     if duration < _ONE_MINUTE:
         return Eta(
             duration="1 minute",
-            finish_time=_round_up(finish_time, _ONE_MINUTE).strftime(_TIME_FORMAT),
+            finish_time=_format_time(_round_up(finish_time, _ONE_MINUTE)),
         )
     elif duration < _FIFTY_FIVE_MINUTES:
         # round up to next 5 minutes
         minutes = ceil(duration / _FIVE_MINUTES) * 5
         return Eta(
             duration=f"{minutes} minutes",
-            finish_time=_round_up(finish_time, _FIVE_MINUTES).strftime(_TIME_FORMAT),
+            finish_time=_format_time(_round_up(finish_time, _FIVE_MINUTES)),
         )
     elif duration < _EIGHT_HOURS:
         # round up to next half hour
@@ -103,16 +117,16 @@ def _format_eta(duration: timedelta) -> Eta:
             hours_str = f"{hours:.1f} hours"
         return Eta(
             duration=hours_str,
-            finish_time=_round_up(finish_time, _HALF_HOUR).strftime(_TIME_FORMAT),
+            finish_time=_format_time(_round_up(finish_time, _HALF_HOUR)),
         )
     else:
         # round up to next hour
         hours = int(ceil(duration / _ONE_HOUR))
         rounded_finish_time = _round_up(finish_time, _ONE_HOUR)
-        if rounded_finish_time.date != datetime.now().date:
-            finish_str = rounded_finish_time.strftime(_DATE_TIME_FORMAT)
+        if rounded_finish_time.date != datetime.now(tz=CONFIG.timezone).date:
+            finish_str = _format_date_time(rounded_finish_time)
         else:
-            finish_str = rounded_finish_time.strftime(_TIME_FORMAT)
+            finish_str = _format_time(rounded_finish_time)
         return Eta(
             duration=f"{hours} hours",
             finish_time=finish_str,
