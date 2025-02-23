@@ -1,0 +1,12 @@
+[Unit]
+Description=Souzu Slack notifications for Bambu printers
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={souzu_path} monitor
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

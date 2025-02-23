@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from souzu.meta import find_souzu
+
 
 def find_uv() -> Path:
     paths = Path(os.environ.get("PATH", "")).as_posix().split(os.pathsep)
@@ -16,11 +18,6 @@ def find_uv() -> Path:
         return local_uv
 
     raise FileNotFoundError("uv executable not found")
-
-
-def find_souzu() -> Path:
-    """Find the souzu executable being run"""
-    return Path(os.path.abspath(sys.argv[0]))
 
 
 def get_souzu_version() -> str:
