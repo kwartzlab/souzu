@@ -14,14 +14,10 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 from types import FrameType
 
-from xdg_base_dirs import xdg_cache_home
-
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttConnection
 from souzu.job_tracking import monitor_printer_status
 from souzu.logs import log_reports
-
-LOG_DIRECTORY = xdg_cache_home() / "souzu/logs"
 
 
 async def inner_loop() -> None:
@@ -35,13 +31,7 @@ async def inner_loop() -> None:
                 connection = await stack.enter_async_context(
                     BambuMqttConnection(tg, device)
                 )
-                tg.create_task(
-                    log_reports(
-                        device,
-                        connection,
-                        LOG_DIRECTORY / f"{device.filename_prefix}.log",
-                    )
-                )
+                tg.create_task(log_reports(device, connection))
                 tg.create_task(monitor_printer_status(device, connection))
             except Exception:
                 logging.exception(
