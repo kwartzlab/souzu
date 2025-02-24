@@ -11,7 +11,7 @@ from cattrs import Converter
 from xdg_base_dirs import xdg_state_home
 
 from souzu.bambu.discovery import BambuDevice
-from souzu.bambu.errors import parse_error_code
+from souzu.bambu.errors import CANCELLED_ERROR_CODES, parse_error_code
 from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
 from souzu.config import CONFIG
 from souzu.slack.thread import (
@@ -260,15 +260,25 @@ async def _job_failed(
     report: BambuStatusReport, state: PrinterState, device: BambuDevice
 ) -> None:
     assert state.current_job is not None
-    error_message = parse_error_code(report.print_error)
-    await _update_job(
-        state.current_job,
-        device,
-        ":x:",
-        "Failed!",
-        f"Print failed!\nMessage from printer: {error_message}",
-    )
-    state.current_job = None
+    if report.print_error in CANCELLED_ERROR_CODES:
+        await _update_job(
+            state.current_job,
+            device,
+            ":heavy_minus_sign:",
+            "Cancelled",
+            "Print cancelled",
+        )
+        state.current_job = None
+    else:
+        error_message = parse_error_code(report.print_error)
+        await _update_job(
+            state.current_job,
+            device,
+            ":x:",
+            "Failed!",
+            f"Print failed!\nMessage from printer: {error_message}",
+        )
+        state.current_job = None
 
 
 async def _job_completed(
