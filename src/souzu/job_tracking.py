@@ -40,11 +40,19 @@ _STATE_SERIALIZER.register_unstructure_hook(timedelta, lambda td: td.total_secon
 _STATE_SERIALIZER.register_structure_hook(
     timedelta, lambda td, _: timedelta(seconds=td)
 )
+_STATE_SERIALIZER.register_unstructure_hook(datetime, lambda dt: dt.isoformat())
+_STATE_SERIALIZER.register_structure_hook(
+    datetime, lambda dt, _: datetime.fromisoformat(dt)
+)
 
 
 class JobState(Enum):
     RUNNING = 'running'
     PAUSED = 'paused'
+
+
+_STATE_SERIALIZER.register_structure_hook(JobState, lambda state, _: state.value)
+_STATE_SERIALIZER.register_unstructure_hook(JobState, lambda state: JobState(state))
 
 
 @define
