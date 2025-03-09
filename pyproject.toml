@@ -55,6 +55,8 @@ reportImplicitOverride = true
 addopts = [
     "--import-mode=importlib",
 ]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 88
@@ -85,6 +87,9 @@ dev-dependencies = [
     "mypy>=1.15.0,<2.0.0",
     "pre-commit>=4.1.0,<5.0.0",
     "pyright>=1.1.393,<2.0.0",
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-asyncio>=0.23.5,<1.0.0",
+    "pytest-mock>=3.12.0,<4.0.0",
     "ruff>=0.9.6,<0.10.0",
     "types-requests",
     "yamllint>=1.35.1,<2.0.0",

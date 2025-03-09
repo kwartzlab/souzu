@@ -16,8 +16,10 @@ LOG_DIRECTORY = xdg_cache_home() / "souzu/logs"
 async def log_reports(
     device: BambuDevice,
     connection: BambuMqttConnection,
+    *,
+    log_directory: Path | None = None,
 ) -> None:
-    file = LOG_DIRECTORY / f"{device.filename_prefix}.log"
+    file = (log_directory or LOG_DIRECTORY) / f"{device.filename_prefix}.log"
     # TODO add log rotation daily
     # TODO expire oldest if it's larger than 10% of available disk space
     try:
@@ -35,7 +37,6 @@ async def log_reports(
         logging.exception(f"Logger task failed for {device.device_name}")
 
 
-# unused yet, we might find a way to use this for testing
 async def replay_logs(file: Path) -> AsyncIterator[BambuStatusReport]:
     try:
         async with await AsyncPath(file).open('r') as f:
