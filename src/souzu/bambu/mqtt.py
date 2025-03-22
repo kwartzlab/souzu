@@ -71,7 +71,7 @@ class BambuAmsSummary:
     ams: list[BambuAmsDetails] = Factory(list)
     tray_now: int | None = None
     tray_pre: int | None = None
-    version: int | None = None
+    # version: int | None = None  # not captured, noisy and not useful for us
 
 
 @frozen
