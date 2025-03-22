@@ -123,7 +123,6 @@ async def test_log_reports_exception_handling(
     temp_log_dir: Path,
     mocker: MockerFixture,
 ) -> None:
-    # Simulate exception in MQTT connection
     mock_connection.subscribe.return_value.__aenter__.side_effect = Exception(
         "Test exception"
     )
@@ -165,10 +164,11 @@ async def test_replay_logs_exception_handling(
     temp_log_dir: Path,
     mocker: MockerFixture,
 ) -> None:
-    # Create file with invalid format to test error handling
     log_file = temp_log_dir / "invalid_log.log"
     async_file = AsyncPath(log_file)
-    await async_file.write_text("invalid json format\n")
+    await async_file.write_text(
+        "invalid json format\n"
+    )  # Create file with invalid format
 
     mock_logging = mocker.patch("souzu.logs.logging.exception")
 

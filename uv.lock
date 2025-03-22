@@ -748,6 +748,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pytz"
+version = "2025.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/bf/abbd3cdfb8fbc7fb3d4d38d320f2441b1e7cbe29be4f23797b4a2b5d8aac/pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3", size = 320884 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/c4/34e93fe5f5429d7570ec1fa436f1986fb1f00c3e0f43a589fe2bbcd22c3f/pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00", size = 509225 },
+]
+
+[[package]]
 name = "pyyaml"
 version = "6.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -842,9 +851,11 @@ dependencies = [
     { name = "cattrs" },
     { name = "deepmerge" },
     { name = "prettyprinter" },
+    { name = "pytz" },
     { name = "requests" },
     { name = "slack-sdk" },
     { name = "ssdp" },
+    { name = "types-pytz" },
     { name = "xdg-base-dirs" },
 ]
 
@@ -872,9 +883,11 @@ requires-dist = [
     { name = "cattrs", specifier = ">=24.1.2" },
     { name = "deepmerge", specifier = ">=2.0,<3.0" },
     { name = "prettyprinter", specifier = ">=0.18.0,<0.19.0" },
+    { name = "pytz", specifier = ">=2025.2" },
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
     { name = "slack-sdk", specifier = ">=3.34.0,<4.0.0" },
     { name = "ssdp", specifier = ">=1.3.0,<2.0.0" },
+    { name = "types-pytz", specifier = ">=2025.2.0.20250326" },
     { name = "xdg-base-dirs", specifier = ">=6.0.2,<7.0.0" },
 ]
 
@@ -900,6 +913,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c5/8a/fb7c36813462ad73933c7c0012f4698e8c7137bc2678e4085d4696754818/ssdp-1.3.0.tar.gz", hash = "sha256:438f1449d0d8f7bd82228cdf8d92c3327edef83b411f28cf23d055d012651491", size = 9315 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/57/e4546471bd05d356920ad525bb1bdaa23128d760a292b8c9caa49050f0e4/ssdp-1.3.0-py3-none-any.whl", hash = "sha256:749c28cb6934f44017672676083b80f305f3c27f4c512dcaa1264be862f5d30f", size = 9992 },
+]
+
+[[package]]
+name = "types-pytz"
+version = "2025.2.0.20250326"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/66/38c89861242f2c61c8315ddbcc7d7bbf64979f4b0bdc48db0ba62aeec330/types_pytz-2025.2.0.20250326.tar.gz", hash = "sha256:deda02de24f527066fc8d6a19e284ab3f3ae716a42b4adb6b40e75e408c08d36", size = 10595 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/e0/17f3a6670db5c95dc195f346e2e7290f22ba8327c188133959389b578cbd/types_pytz-2025.2.0.20250326-py3-none-any.whl", hash = "sha256:3c397fd1b845cd2b3adc9398607764ced9e578a98a5d1fbb4a9bc9253edfb162", size = 10222 },
 ]
 
 [[package]]

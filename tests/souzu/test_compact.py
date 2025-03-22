@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from anyio import Path as AsyncPath
+from pytest_mock import MockerFixture
 
 from souzu.bambu.mqtt import SERIALIZER, BambuStatusReport
-from souzu.commands.compact import compact_log_file
+from souzu.commands.compact import compact, compact_log_file
 
 
 @pytest.fixture
@@ -136,3 +138,115 @@ async def test_compact_log_file_invalid_lines(
 
     assert output_lines[0] == f"{timestamp} {report_json}"
     assert output_lines[1] == "Invalid line without proper format"
+
+
+@pytest.mark.asyncio
+async def test_compact_log_file_error_handling(
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    """Test error handling in compact_log_file."""
+    input_log = tmp_path / "test_input.log"
+    output_log = tmp_path / "test_output.log"
+
+    async_input = AsyncPath(input_log)
+    await async_input.write_text("Test content")
+
+    mock_open = AsyncMock()
+    mock_open.side_effect = Exception("Test exception")
+
+    with patch("anyio.Path.open", mock_open):
+        mock_logging = mocker.patch("souzu.commands.compact.logging.exception")
+
+        with pytest.raises(Exception, match="Test exception"):
+            await compact_log_file(input_log, output_log)
+
+        mock_logging.assert_called_once_with(f"Failed to compact log file {input_log}")
+
+
+@pytest.mark.asyncio
+async def test_compact_with_default_output(
+    tmp_path: Path,
+    test_report1: BambuStatusReport,
+    mocker: MockerFixture,
+) -> None:
+    """Test compact function with default output file."""
+    input_log = tmp_path / "test.log"
+    expected_output_log = input_log.with_suffix('.compact.log')
+
+    timestamp = "2023-01-01T12:00:00+00:00"
+    report_json = json.dumps(SERIALIZER.unstructure(test_report1))
+    log_content = f"{timestamp} {report_json}\n{timestamp} {report_json}\n"
+
+    async_input = AsyncPath(input_log)
+    await async_input.write_text(log_content)
+
+    mock_logging = mocker.patch("souzu.commands.compact.logging.info")
+
+    await compact(input_log)
+
+    async_output = AsyncPath(expected_output_log)
+    assert await async_output.exists()
+
+    mock_logging.assert_called_once()
+    log_message = mock_logging.call_args[0][0]
+    assert "Compacted" in log_message
+    assert "from 2 to 1 lines" in log_message
+    assert "50.0% reduction" in log_message
+
+
+@pytest.mark.asyncio
+async def test_compact_with_custom_output(
+    tmp_path: Path,
+    test_report1: BambuStatusReport,
+    mocker: MockerFixture,
+) -> None:
+    """Test compact function with custom output file."""
+    input_log = tmp_path / "test.log"
+    output_log = tmp_path / "custom_output.log"
+
+    timestamp = "2023-01-01T12:00:00+00:00"
+    report_json = json.dumps(SERIALIZER.unstructure(test_report1))
+    log_content = f"{timestamp} {report_json}\n{timestamp} {report_json}\n"
+
+    async_input = AsyncPath(input_log)
+    await async_input.write_text(log_content)
+
+    mock_logging = mocker.patch("souzu.commands.compact.logging.info")
+
+    await compact(input_log, output_log)
+
+    async_output = AsyncPath(output_log)
+    assert await async_output.exists()
+
+    mock_logging.assert_called_once()
+    log_message = mock_logging.call_args[0][0]
+    assert "Compacted" in log_message
+    assert "from 2 to 1 lines" in log_message
+    assert "50.0% reduction" in log_message
+
+
+@pytest.mark.asyncio
+async def test_compact_empty_file(
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    """Test compact function with an empty file (edge case)."""
+    input_log = tmp_path / "empty.log"
+    output_log = tmp_path / "empty_output.log"
+
+    async_input = AsyncPath(input_log)
+    await async_input.write_text("")
+
+    mock_logging = mocker.patch("souzu.commands.compact.logging.info")
+
+    await compact(input_log, output_log)
+
+    async_output = AsyncPath(output_log)
+    assert await async_output.exists()
+
+    mock_logging.assert_called_once()
+    log_message = mock_logging.call_args[0][0]
+    assert "Compacted" in log_message
+    assert "from 0 to 0 lines" in log_message
+    assert "0.0% reduction" in log_message
