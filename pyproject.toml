@@ -1,12 +1,10 @@
 [project]
 name = "souzu"
 description = "Service to monitor Bambu printers and publish print job notifications"
-authors = [
-    {name = "Luc Ritchie", email = "luc.ritchie@gmail.com"},
-]
+authors = [{ name = "Luc Ritchie", email = "luc.ritchie@gmail.com" }]
 requires-python = ">=3.12,<4.0"
 dependencies = [
-    "aiohttp[speedups]>=3.11.12,<4.0.0",  # for slack-sdk async
+    "aiohttp[speedups]>=3.11.12,<4.0.0", # for slack-sdk async
     "aiomqtt>=2.3.0,<3.0.0",
     "anyio>=4.8.0,<5.0.0",
     "attrs>=24.3.0",
@@ -29,22 +27,53 @@ build-backend = "hatchling.build"
 
 [tool.coverage.run]
 branch = true
+source = ["src"]
+omit = ["*/tests/*", "*/__pycache__/*", "*/site-packages/*"]
+
+[tool.coverage.paths]
+source = ["src/", "*/site-packages/"]
+
+[tool.coverage.report]
+exclude_lines = [
+    # Have to re-enable the standard pragma
+    "pragma: no cover",
+
+    # Don't complain about missing debug-only code:
+    "def __repr__",
+    "if self\\.debug",
+
+    # Don't complain if tests don't hit defensive assertion code:
+    "raise AssertionError",
+    "raise NotImplementedError",
+
+    # Don't complain if non-runnable code isn't run:
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "pass",
+
+    # Don't complain about abstract methods, they aren't run:
+    "@(abc\\.)?abstractmethod",
+
+    # Other standard exclusions
+    "raise ImportError",
+]
+show_missing = true
+fail_under = 70
+ignore_errors = true
 
 [tool.hatch]
 version.source = "vcs"
 metadata.allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = [
-    "src/souzu",
-]
+packages = ["src/souzu"]
 
 [tool.mypy]
 disallow_untyped_defs = true
 explicit_package_bases = true
 ignore_missing_imports = true
 enable_error_code = [
-    "truthy-bool",  # catch mistakes like "if f.exists()" instead of "if await f.exists()"
+    "truthy-bool", # catch mistakes like "if f.exists()" instead of "if await f.exists()"
 ]
 
 [tool.pyright]
@@ -54,6 +83,10 @@ reportImplicitOverride = true
 [tool.pytest.ini_options]
 addopts = [
     "--import-mode=importlib",
+    "--cov=src/souzu",
+    "--cov-report=term",
+    "--cov-report=html",
+    "--cov-report=xml",
 ]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
@@ -78,17 +111,19 @@ select = [
     "ANN",
     "ASYNC",
     "UP",
-    "RUF100",  # unused noqa
-    "T201",  # print statements
+    "RUF100", # unused noqa
+    "T201",   # print statements
 ]
 
 [tool.uv]
 dev-dependencies = [
+    "coverage>=7.4.3,<8.0.0",
     "mypy>=1.15.0,<2.0.0",
     "pre-commit>=4.1.0,<5.0.0",
     "pyright>=1.1.393,<2.0.0",
     "pytest>=8.0.0,<9.0.0",
     "pytest-asyncio>=0.23.5,<1.0.0",
+    "pytest-cov>=4.1.0,<5.0.0",
     "pytest-mock>=3.12.0,<4.0.0",
     "ruff>=0.9.6,<0.10.0",
     "types-requests",

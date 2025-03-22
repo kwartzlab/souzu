@@ -3,3 +3,8 @@ dist/
 /.pids
 /.venv
 .vscode/
+.coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+*.py,cover
