@@ -195,6 +195,55 @@ async def test_file_persistence() -> None:
         assert restored_data.field2 == original_data.field2
 ```
 
+### Testing Network Services and Discovery
+- Use clean, instance-specific queues for discovery tests
+- Create factory functions for frozen class objects to simplify testing
+- Test response and request handling directly through handler methods
+- Test both successful discoveries and failure scenarios
+- Simulate device/service discovery through direct handler invocation
+- Test duplicate detection and filtering mechanisms
+- Mock socket communication but verify actual message handling
+- Test timeout behaviors and network error cases
+- Prefer testing the actual business logic over mocking handler functions
+
+#### Example: Network Discovery Testing
+```python
+@pytest.mark.asyncio
+async def test_discovery_flow() -> None:
+    """Test integrated discovery flow with simulated device discovery."""
+    # Create clean objects for this test
+    discovery_queue = Queue[Device]()
+    discovery = Discovery(discovery_queue)
+    
+    # Simulate device discovery by directly calling message handlers
+    discovery.handle_message([
+        ("Type", "device"),
+        ("ID", "DEVICE101"),
+        ("Name", "Device One"),
+        ("Address", "192.168.1.101"),
+    ])
+    
+    # Verify device was added to the queue
+    assert discovery_queue.qsize() == 1
+    device = discovery_queue.get_nowait()
+    
+    # Verify device properties
+    assert device.id == "DEVICE101"
+    assert device.name == "Device One"
+    assert device.address == "192.168.1.101"
+    
+    # Test duplicate detection
+    discovery.handle_message([
+        ("Type", "device"),
+        ("ID", "DEVICE101"),  # Same ID should be detected as duplicate
+        ("Name", "Device One"),
+        ("Address", "192.168.1.101"),
+    ])
+    
+    # Verify no duplicate was added
+    assert discovery_queue.empty()
+```
+
 ### Avoiding Over-Mocking
 - Only mock external dependencies or slow operations, not core functionality
 - Test the actual behavior, not just that functions were called
