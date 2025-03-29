@@ -1,15 +1,17 @@
 import json
 from asyncio import Queue
 from collections.abc import AsyncGenerator, Generator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from anyio import Path as AsyncPath
 
 from souzu.bambu.discovery import BambuDevice
 from souzu.bambu.mqtt import (
+    SERIALIZER,
     BambuMqttConnection,
     BambuStatusReport,
     _BambuWrapper,
@@ -35,26 +37,28 @@ def test_bambu_wrapper() -> None:
 
 
 def test_parse_payload() -> None:
-    """Test _parse_payload method of BambuMqttConnection."""
+    """Test _parse_payload method of BambuMqttConnection using actual serialization."""
+    # Create a connection with initial cache
     connection = MagicMock(spec=BambuMqttConnection)
-    connection._cache = _Cache(print=BambuStatusReport())
+    initial_report = BambuStatusReport(
+        bed_temper=55,  # This will be updated by the new payload
+        nozzle_temper=190,  # This will be updated by the new payload
+        mc_remaining_time=120,  # This will be preserved
+    )
+    connection._cache = _Cache(print=initial_report)
 
-    payload = json.dumps({"print": {"bed_temper": 65, "nozzle_temper": 200}}).encode()
+    # Create a test payload with some updated values
+    payload_data = {"print": {"bed_temper": 65, "nozzle_temper": 200}}
+    payload = json.dumps(payload_data).encode()
 
-    with (
-        patch("souzu.bambu.mqtt.unstructure", return_value={}),
-        patch(
-            "souzu.bambu.mqtt.structure",
-            return_value=_BambuWrapper(
-                print=BambuStatusReport(bed_temper=65, nozzle_temper=200)
-            ),
-        ),
-    ):
-        result = BambuMqttConnection._parse_payload(connection, payload)
+    # Call the actual parse_payload method
+    result = BambuMqttConnection._parse_payload(connection, payload)
 
-        assert result is not None
-        assert result.print.bed_temper == 65
-        assert result.print.nozzle_temper == 200
+    # Verify expected results
+    assert result is not None
+    assert result.print.bed_temper == 65  # Updated from payload
+    assert result.print.nozzle_temper == 200  # Updated from payload
+    assert result.print.mc_remaining_time == 120  # Preserved from initial report
 
 
 @pytest.mark.asyncio
@@ -282,81 +286,149 @@ async def test_consume_messages_mqtt_error(
 
 
 @pytest.mark.asyncio
+async def test_with_cache_serialization() -> None:
+    """Test the serialization of _Cache objects."""
+    # Create a cache object with various data
+    report = BambuStatusReport(
+        bed_temper=60,
+        nozzle_temper=210,
+        mc_remaining_time=120,
+        gcode_state="RUNNING",
+        mc_percent=50,
+        layer_num=10,
+        total_layer_num=20,
+    )
+
+    original_cache = _Cache(
+        print=report,
+        last_update=datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC),
+        last_full_update=datetime(2023, 1, 1, 11, 0, 0, tzinfo=UTC),
+    )
+
+    # Step 1: Unstructure to dictionary using the serializer
+    cache_dict = SERIALIZER.unstructure(original_cache)
+
+    # Step 2: Convert to JSON
+    json_str = json.dumps(cache_dict)
+
+    # Step 3: Convert back from JSON
+    json_loaded = json.loads(json_str)
+
+    # Step 4: Structure back to object using the serializer
+    restored_cache = SERIALIZER.structure(json_loaded, _Cache)
+
+    # Verify the round trip worked correctly
+    assert restored_cache.print is not None
+    assert restored_cache.last_update == original_cache.last_update
+    assert restored_cache.last_full_update == original_cache.last_full_update
+
+    # Check report fields
+    assert restored_cache.print.bed_temper == report.bed_temper
+    assert restored_cache.print.nozzle_temper == report.nozzle_temper
+    assert restored_cache.print.mc_remaining_time == report.mc_remaining_time
+    assert restored_cache.print.gcode_state == report.gcode_state
+    assert restored_cache.print.mc_percent == report.mc_percent
+    assert restored_cache.print.layer_num == report.layer_num
+    assert restored_cache.print.total_layer_num == report.total_layer_num
+
+
+@pytest.mark.asyncio
 async def test_with_cache(
-    mock_device: BambuDevice, mock_config: Generator[MagicMock, None, None]
+    mock_device: BambuDevice,
+    mock_config: Generator[MagicMock, None, None],
+    tmp_path: Path,
 ) -> None:
-    """Test _with_cache method with no existing cache file."""
-    task_group = MagicMock()
-    connection = BambuMqttConnection(task_group, mock_device)
+    """Test _with_cache method with no existing cache file, using a real temporary directory."""
+    # Create a temporary directory for the cache
+    with TemporaryDirectory() as temp_dir:
+        # Create a real AsyncPath for the temp directory
+        temp_cache_dir = AsyncPath(temp_dir)
+        task_group = MagicMock()
+        connection = BambuMqttConnection(task_group, mock_device)
 
-    # Create mocks for the cache directory and file
-    mock_cache_dir = AsyncMock()
-    mock_cache_file = AsyncMock()
-    mock_file = AsyncMock()
+        # Set up test cache data
+        test_report = BambuStatusReport(bed_temper=60, nozzle_temper=200)
 
-    mock_cache_dir.mkdir = AsyncMock()
-    mock_cache_file.exists = AsyncMock(return_value=False)  # Simulate no existing cache
-    mock_cache_file.open = AsyncMock()
-    mock_cache_file.open.return_value.__aenter__ = AsyncMock(return_value=mock_file)
-    mock_cache_dir.__truediv__ = MagicMock(return_value=mock_cache_file)
+        with patch("souzu.bambu.mqtt._CACHE_DIR", temp_cache_dir):
+            # Use the actual cache mechanism
+            async with connection._with_cache():
+                assert connection._cache is not None
+                # Modify cache to test it gets written on exit
+                connection._cache = _Cache(
+                    print=test_report,
+                    last_update=datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC),
+                )
 
-    # Create a mock for json.dumps
-    mock_dumps = MagicMock(return_value="{}")
-    # Create a mock unstructure function
-    mock_unstructure = MagicMock(return_value={})
+            # Verify file was created and use AsyncPath for async file operations
+            async_cache_file = (
+                temp_cache_dir / f'mqtt.{mock_device.filename_prefix}.json'
+            )
+            assert await async_cache_file.exists()
 
-    with (
-        patch("souzu.bambu.mqtt._CACHE_DIR", mock_cache_dir),
-        patch("souzu.bambu.mqtt.json.dumps", mock_dumps),
-        patch("souzu.bambu.mqtt.unstructure", mock_unstructure),
-    ):
-        async with connection._with_cache():
-            mock_cache_dir.mkdir.assert_called_with(exist_ok=True, parents=True)
-            mock_cache_file.exists.assert_called_once()
-            assert connection._cache is not None
-
-            # Modify cache to test it gets written on exit
-            test_cache = _Cache(print=BambuStatusReport(bed_temper=60))
-            connection._cache = test_cache
-
-        mock_cache_file.open.assert_called_once()
-        mock_file.write.assert_called_once()
+            # Read the file content to verify it contains our data
+            async with await async_cache_file.open('r') as f:
+                content = await f.read()
+                # Verify it's valid JSON
+                cache_data = json.loads(content)
+                # Verify our data is in there
+                assert "print" in cache_data
+                assert "bed_temper" in cache_data["print"]
+                assert cache_data["print"]["bed_temper"] == 60
+                assert "nozzle_temper" in cache_data["print"]
+                assert cache_data["print"]["nozzle_temper"] == 200
+                assert "last_update" in cache_data
 
 
 @pytest.mark.asyncio
 async def test_with_cache_load_existing(
     mock_device: BambuDevice, mock_config: Generator[MagicMock, None, None]
 ) -> None:
-    """Test _with_cache method with existing cache file."""
-    task_group = MagicMock()
-    connection = BambuMqttConnection(task_group, mock_device)
+    """Test _with_cache method with existing cache file, using real file operations."""
+    # Create a temporary directory for the cache
+    with TemporaryDirectory() as temp_dir:
+        # Create a real AsyncPath for the temp directory
+        temp_cache_dir = AsyncPath(temp_dir)
+        task_group = MagicMock()
+        connection = BambuMqttConnection(task_group, mock_device)
 
-    # Create a simplified version that just tests the basic functionality
-    # Prepare cache data structure
-    cache_data = _Cache(
-        print=BambuStatusReport(bed_temper=65, nozzle_temper=210),
-        last_update=datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC),
-    )
+        # Create test cache data
+        original_report = BambuStatusReport(bed_temper=65, nozzle_temper=210)
+        original_cache = _Cache(
+            print=original_report,
+            last_update=datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC),
+        )
 
-    # Mock the cache implementation
-    @asynccontextmanager
-    async def mock_with_cache_impl() -> AsyncGenerator[None, None]:
-        # Set the cache data when entering context
-        connection._cache = cache_data
-        yield
-        # Nothing to verify on exit, just need the context to work
+        # Manually create a cache file with our test data using AsyncPath for async operations
+        async_cache_file = temp_cache_dir / f'mqtt.{mock_device.filename_prefix}.json'
+        serialized = json.dumps(SERIALIZER.unstructure(original_cache))
+        async with await async_cache_file.open('w') as f:
+            await f.write(serialized)
 
-    # Patch the method to use our simplified implementation
-    with patch.object(
-        BambuMqttConnection, "_with_cache", return_value=mock_with_cache_impl()
-    ):
-        # Execute the test
-        async with connection._with_cache():
-            # Verify the cache was properly set
-            assert connection._cache is cache_data
-            assert connection._cache.print is not None
-            assert connection._cache.print.bed_temper == 65
-            assert connection._cache.print.nozzle_temper == 210
+        with patch("souzu.bambu.mqtt._CACHE_DIR", temp_cache_dir):
+            # Use the actual cache mechanism to load the existing file
+            async with connection._with_cache():
+                # Verify the cache was properly loaded
+                assert connection._cache is not None
+                assert connection._cache.print is not None
+                assert connection._cache.print.bed_temper == 65
+                assert connection._cache.print.nozzle_temper == 210
+                assert connection._cache.last_update is not None
+
+                # Save a modified value to test that it gets written back correctly
+                connection._cache = _Cache(
+                    print=BambuStatusReport(bed_temper=70, nozzle_temper=220),
+                    last_update=datetime(2023, 1, 1, 13, 0, 0, tzinfo=UTC),
+                )
+
+        # Verify the file was updated with our new values using AsyncPath
+        async with await async_cache_file.open('r') as f:
+            content = await f.read()
+            cache_data = json.loads(content)
+            assert "print" in cache_data
+            assert "bed_temper" in cache_data["print"]
+            assert cache_data["print"]["bed_temper"] == 70
+            assert "nozzle_temper" in cache_data["print"]
+            assert cache_data["print"]["nozzle_temper"] == 220
 
 
 @pytest.mark.asyncio
