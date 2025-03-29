@@ -51,8 +51,10 @@ class JobState(Enum):
     PAUSED = 'paused'
 
 
-_STATE_SERIALIZER.register_structure_hook(JobState, lambda state, _: state.value)
-_STATE_SERIALIZER.register_unstructure_hook(JobState, lambda state: JobState(state))
+_STATE_SERIALIZER.register_unstructure_hook(JobState, lambda state: state.value)
+_STATE_SERIALIZER.register_structure_hook(
+    JobState, lambda state_value, _: JobState(state_value)
+)
 
 
 @define

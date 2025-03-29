@@ -619,3 +619,66 @@ async def test_monitor_printer_status_cancelled_error(mocker: MockerFixture) -> 
         # CancelledError should be propagated
         with pytest.raises(CancelledError):
             await monitor_printer_status(device, mock_connection)
+
+
+def test_job_state_unstructure() -> None:
+    """Test that JobState unstructure hook converts enum to string."""
+    from souzu.job_tracking import _STATE_SERIALIZER
+
+    # This should convert JobState.RUNNING to "running"
+    result = _STATE_SERIALIZER.unstructure(JobState.RUNNING)
+
+    # Verify result is a string value, not another JobState enum
+    assert isinstance(result, str)
+    assert result == "running"
+
+
+def test_job_state_structure() -> None:
+    """Test that JobState structure hook converts string to enum."""
+    from souzu.job_tracking import _STATE_SERIALIZER
+
+    # This should convert "paused" to JobState.PAUSED
+    result = _STATE_SERIALIZER.structure("paused", JobState)
+
+    # Verify result is a JobState enum, not a string
+    assert isinstance(result, JobState)
+    assert result == JobState.PAUSED
+
+
+def test_printer_state_serialization_round_trip() -> None:
+    """Test complete serialization cycle for PrinterState with JobState."""
+    import json
+
+    from souzu.job_tracking import _STATE_SERIALIZER
+
+    # Create a PrinterState with a running job
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        eta=datetime(2023, 1, 1, 14, 0, 0),
+        state=JobState.RUNNING,
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+        start_message="Test job started",
+    )
+    state = PrinterState(current_job=job)
+
+    # Step 1: Unstructure with the serializer
+    unstructured = _STATE_SERIALIZER.unstructure(state)
+
+    # Step 2: Convert to JSON
+    json_str = json.dumps(unstructured)
+
+    # Step 3: Convert back from JSON
+    json_loaded = json.loads(json_str)
+
+    # Step 4: Structure back to object
+    restructured = _STATE_SERIALIZER.structure(json_loaded, PrinterState)
+
+    # Verify round trip worked
+    assert restructured.current_job is not None
+    assert restructured.current_job.duration == job.duration
+    assert restructured.current_job.eta == job.eta
+    assert restructured.current_job.state == job.state
+    assert restructured.current_job.slack_channel == job.slack_channel
+    assert restructured.current_job.slack_thread_ts == job.slack_thread_ts
+    assert restructured.current_job.start_message == job.start_message
