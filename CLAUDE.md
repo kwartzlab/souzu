@@ -55,6 +55,73 @@ After each session working with this repository, update this file with any impor
 - Properly type annotate async functions and generators in tests
 - Mock `__aenter__` and `__anext__` methods for async context managers and iterators
 - Use `pytest.mark.asyncio` decorator for async test functions
+- When testing coroutines, be careful with AsyncMock as it can lead to "coroutine never awaited" warnings
+
+### Testing Asynchronous Workflows
+- Use explicit try/except blocks for testing exception handling in async code
+- Break complex async workflows into smaller testable components
+- Test both success and error paths through async workflows
+- For complex loops, create tests that simulate each step independently
+- Use AsyncMock for mocking async functions, but be aware of "coroutine never awaited" warnings
+- Prefer regular Mock for event.set() and similar calls to avoid coroutine warnings
+- Test async signal handlers and event loops thoroughly
+
+#### Example: Testing Signal Handlers
+```python
+@pytest.mark.asyncio
+async def test_signal_handlers():
+    """Test that signal handlers correctly trigger the exit event."""
+    # Create a mock asyncio loop that captures signal handlers
+    mock_loop = Mock()
+    signal_handlers = {}
+    
+    def mock_add_handler(sig, handler, *args):
+        signal_handlers[sig] = (handler, args)
+    
+    mock_loop.add_signal_handler.side_effect = mock_add_handler
+    
+    with patch("module.get_running_loop", return_value=mock_loop):
+        # Run the function that sets up signal handlers
+        await my_async_function()
+        
+        # Verify signal handlers were registered for the right signals
+        assert signal.SIGINT in signal_handlers
+        assert signal.SIGTERM in signal_handlers
+        
+        # Call the handler manually to test it works
+        handler, args = signal_handlers[signal.SIGINT]
+        handler(*args)
+        
+        # Verify the handler did the right thing
+        assert expected_action_happened
+```
+
+#### Example: Testing Asynchronous Workflows
+```python
+@pytest.mark.asyncio
+async def test_async_task_processing():
+    """Test an async workflow by simulating its steps."""
+    # Create test data
+    test_item = create_test_item()
+    
+    # Mock or simulate the async components
+    mock_queue = AsyncMock()
+    mock_queue.get.return_value = test_item
+    
+    # Mock the async resources
+    mock_resource = AsyncMock()
+    
+    # Test the actual processing logic
+    try:
+        result = await process_item(test_item, mock_resource)
+        
+        # Verify the result
+        assert result.status == "success"
+        assert mock_resource.process.called_once_with(test_item)
+    except Exception:
+        # Verify exception handling if applicable
+        assert mock_resource.cleanup.called
+```
 
 ### Best Practices for Serialization Tests
 - Test serialization with actual round-trip tests (object → serialized → object)
