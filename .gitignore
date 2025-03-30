@@ -8,3 +8,5 @@ dist/
 htmlcov/
 coverage.xml
 *.py,cover
+*.log
+!/tests/assets
