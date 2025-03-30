@@ -341,18 +341,25 @@ async def monitor_printer_status(
         try:
             async with connection.subscribe() as reports:
                 async for report in reports:
-                    match (state.current_job, report.gcode_state):
-                        case (None, 'RUNNING'):
+                    match (
+                        state.current_job,
+                        report.gcode_state,
+                        report.mc_remaining_time,
+                    ):
+                        case (_, 'RUNNING', None | 0):
+                            # wait until we get the remaining time
+                            pass
+                        case (None, 'RUNNING', _):
                             await _job_started(report, state, device)
-                        case (PrintJob(state=JobState.RUNNING), 'PAUSE'):
+                        case (PrintJob(state=JobState.RUNNING), 'PAUSE', _):
                             await _job_paused(report, state, device)
-                        case (PrintJob(state=JobState.PAUSED), 'RUNNING'):
+                        case (PrintJob(state=JobState.PAUSED), 'RUNNING', _):
                             await _job_resumed(report, state, device)
-                        case (PrintJob(), 'FINISH'):
+                        case (PrintJob(), 'FINISH', _):
                             await _job_completed(report, state, device)
-                        case (PrintJob(), 'FAILED'):
+                        case (PrintJob(), 'FAILED', _):
                             await _job_failed(report, state, device)
-                        case (PrintJob(), 'IDLE'):
+                        case (PrintJob(), 'IDLE', _):
                             await _job_tracking_lost(report, state, device)
         finally:
             serialized = json.dumps(_STATE_SERIALIZER.unstructure(state))
