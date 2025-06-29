@@ -11,7 +11,6 @@ from asyncio import (
     wait,
 )
 from contextlib import AsyncExitStack
-from datetime import timedelta
 from types import FrameType
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
@@ -23,7 +22,7 @@ from souzu.logs import log_reports
 async def inner_loop() -> None:
     queue = Queue[BambuDevice]()
     async with TaskGroup() as tg, AsyncExitStack() as stack:
-        tg.create_task(discover_bambu_devices(queue, max_time=timedelta(minutes=1)))
+        tg.create_task(discover_bambu_devices(queue))
         while True:
             device = await queue.get()
             logging.info(f"Found device {device.device_name} at {device.ip_address}")
