@@ -117,8 +117,8 @@ select = [
     "T201",   # print statements
 ]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "coverage>=7.4.3,<8.0.0",
     "mypy>=1.15.0,<2.0.0",
     "pre-commit>=4.1.0,<5.0.0",

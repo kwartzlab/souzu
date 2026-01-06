@@ -3,7 +3,7 @@ default_install_hook_types: [pre-commit, post-checkout]
 default_stages: [pre-commit, pre-push, manual]
 repos:
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.5.29
+    rev: 0.9.21
     hooks:
       - id: uv-lock
         require_serial: true
