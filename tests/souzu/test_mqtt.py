@@ -222,10 +222,15 @@ async def test_consume_messages(
     connection._stack.enter_context = MagicMock(return_value=mock_path_cm)
     connection._cache = _Cache()
 
+    mock_ssl_context = MagicMock()
+
     with (
         patch("souzu.bambu.mqtt.resources.path", mock_resource_path),
         patch("souzu.bambu.mqtt.Client", mock_client_factory),
         patch("souzu.bambu.mqtt._SniSslContext", MagicMock()),
+        patch(
+            "souzu.bambu.mqtt.ssl.create_default_context", return_value=mock_ssl_context
+        ),
         patch("souzu.bambu.mqtt.datetime", MagicMock()),
     ):
         with pytest.raises(Exception, match="Stop the test"):
@@ -272,10 +277,15 @@ async def test_consume_messages_mqtt_error(
     connection._stack.__aenter__ = AsyncMock()
     connection._stack.enter_context = MagicMock(return_value=mock_path_cm)
 
+    mock_ssl_context = MagicMock()
+
     with (
         patch("souzu.bambu.mqtt.resources.path", mock_resource_path),
         patch("souzu.bambu.mqtt.Client", mock_client_factory),
         patch("souzu.bambu.mqtt._SniSslContext", MagicMock()),
+        patch(
+            "souzu.bambu.mqtt.ssl.create_default_context", return_value=mock_ssl_context
+        ),
         patch("souzu.bambu.mqtt.sleep", mock_sleep),
     ):
         with pytest.raises(Exception, match="Stop the test"):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 from asyncio import Queue, QueueFull, Task, TaskGroup, sleep
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import (
@@ -17,7 +18,7 @@ from ssl import SSLContext, SSLSession, SSLSocket
 from types import TracebackType
 from typing import Any, Self, cast, override
 
-from aiomqtt import Client, MqttError, TLSParameters
+from aiomqtt import Client, MqttError
 from aiomqtt.types import PayloadType
 from anyio import Path as AsyncPath
 from attrs import Factory, field, frozen
@@ -276,20 +277,17 @@ class BambuMqttConnection(AbstractAsyncContextManager):
         self._ca_path = self._stack.enter_context(
             resources.path(res, "bambu_lan_ca_cert.pem")
         )
-        tls_params = TLSParameters(ca_certs=str(self._ca_path))
+        # Create SSL context manually so we can wrap it with _SniSslContext
+        # before passing to aiomqtt (tls_params defers setup until connect)
+        base_ssl_context = ssl.create_default_context(cafile=str(self._ca_path))
+        tls_context = _SniSslContext(self.device.device_id, base_ssl_context)
         while True:
             client = Client(
                 hostname=self.ip,
                 port=8883,
                 username="bblp",
                 password=self.access_code,
-                tls_params=tls_params,
-            )
-
-            # patch to send device id in SNI, and fix cert validation
-            assert client._client._ssl_context is not None
-            client._client._ssl_context = _SniSslContext(
-                self.device.device_id, client._client._ssl_context
+                tls_context=tls_context,
             )
 
             try:
