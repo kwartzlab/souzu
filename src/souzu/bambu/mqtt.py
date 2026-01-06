@@ -278,8 +278,12 @@ class BambuMqttConnection(AbstractAsyncContextManager):
             resources.path(res, "bambu_lan_ca_cert.pem")
         )
         # Create SSL context manually so we can wrap it with _SniSslContext
-        # before passing to aiomqtt (tls_params defers setup until connect)
-        base_ssl_context = ssl.create_default_context(cafile=str(self._ca_path))
+        # before passing to aiomqtt (tls_params defers setup until connect).
+        # Use SSLContext directly instead of create_default_context() because
+        # the Bambu CA cert lacks key usage extensions that stricter defaults require.
+        base_ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        base_ssl_context.verify_mode = ssl.CERT_REQUIRED
+        base_ssl_context.load_verify_locations(cafile=str(self._ca_path))
         tls_context = _SniSslContext(self.device.device_id, base_ssl_context)
         while True:
             client = Client(
