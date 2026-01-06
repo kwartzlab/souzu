@@ -73,6 +73,7 @@ class BambuAmsSummary:
     tray_now: int | None = None
     tray_pre: int | None = None
     # version: int | None = None  # not captured, noisy and not useful for us
+    vt_tray: BambuAmsSlot | None = None  # external/manual spool (id=254)
 
 
 @frozen
