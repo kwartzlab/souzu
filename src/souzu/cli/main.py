@@ -1,18 +1,8 @@
 import argparse
 import logging
 import sys
-from asyncio import (
-    run,
-)
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-
-from prettyprinter import install_extras
-
-from souzu.commands.compact import compact
-from souzu.commands.install import install
-from souzu.commands.monitor import monitor
-from souzu.commands.update import update
 
 
 def _parse_args() -> argparse.Namespace:
@@ -56,23 +46,41 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    install_extras(frozenset({'attrs'}))
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
-    if args.command == "monitor":
-        run(monitor())
-    elif args.command == "update":
+
+    # Commands are lazily imported to isolate failures - a broken dependency in
+    # one command (e.g., monitor) won't prevent other commands (e.g., update)
+    # from running. This is critical for the auto-update mechanism.
+    if args.command == "update":
         try:
+            from souzu.commands.update import update
+
             update(args.restart)
         except Exception as e:
             print(f"Error updating: {e}", file=sys.stderr)  # noqa: T201
             exit(1)
+    elif args.command == "monitor":
+        from asyncio import run
+
+        from prettyprinter import install_extras
+
+        from souzu.commands.monitor import monitor
+
+        install_extras(frozenset({"attrs"}))
+        run(monitor())
     elif args.command == "install":
         try:
+            from souzu.commands.install import install
+
             install()
         except Exception as e:
             print(f"Error installing: {e}", file=sys.stderr)  # noqa: T201
             exit(1)
     elif args.command == "compact":
+        from asyncio import run
+
+        from souzu.commands.compact import compact
+
         try:
             run(compact(args.input_file, args.output))
         except Exception as e:
