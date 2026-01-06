@@ -2,7 +2,7 @@ import argparse
 import sys
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from pytest_mock import MockerFixture
@@ -112,9 +112,7 @@ class TestMain:
             return_value=argparse.Namespace(command="monitor", verbose=False),
         )
         mock_run = mocker.patch("asyncio.run")
-        mock_monitor = mocker.patch(
-            "souzu.commands.monitor.monitor", return_value=AsyncMock()
-        )
+        mock_monitor = mocker.patch("souzu.commands.monitor.monitor")
         mock_install_extras = mocker.patch("prettyprinter.install_extras")
         mock_logging = mocker.patch("souzu.cli.main.logging.basicConfig")
 
@@ -212,9 +210,7 @@ class TestMain:
             ),
         )
         mock_run = mocker.patch("asyncio.run")
-        mock_compact = mocker.patch(
-            "souzu.commands.compact.compact", return_value=AsyncMock()
-        )
+        mock_compact = mocker.patch("souzu.commands.compact.compact")
         mock_logging = mocker.patch("souzu.cli.main.logging.basicConfig")
 
         main()
@@ -234,7 +230,7 @@ class TestMain:
             ),
         )
         mocker.patch("asyncio.run", side_effect=ValueError("Compact error"))
-        mocker.patch("souzu.commands.compact.compact", return_value=AsyncMock())
+        mocker.patch("souzu.commands.compact.compact")
         mocker.patch("souzu.cli.main.logging.basicConfig")
         mock_print = mocker.patch("builtins.print")
         mock_exit = mocker.patch("souzu.cli.main.exit")
@@ -264,7 +260,7 @@ class TestMain:
             return_value=argparse.Namespace(command="monitor", verbose=True),
         )
         mock_run = mocker.patch("asyncio.run")
-        mocker.patch("souzu.commands.monitor.monitor", return_value=AsyncMock())
+        mocker.patch("souzu.commands.monitor.monitor")
         mocker.patch("prettyprinter.install_extras")
         mock_logging = mocker.patch("souzu.cli.main.logging.basicConfig")
 
