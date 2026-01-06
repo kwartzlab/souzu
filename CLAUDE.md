@@ -7,7 +7,7 @@ After each session working with this repository, update this file with any impor
 - `uv run souzu` - Run from source tree
 - `./build.sh -i` - Build and install locally
 - `./build.sh -p host` - Build and push to remote host
-- `./install-hooks.sh` - Install git pre-commit hooks
+- `./install-hooks.sh` - Install git prek hooks
 
 ## UV Package Management
 - `uv sync` - Update the project's environment based on pyproject.toml/uv.lock
@@ -25,7 +25,7 @@ After each session working with this repository, update this file with any impor
 ## Testing
 - `uv run pytest` - Run tests
 - `uv run pytest tests/souzu/test_logs.py -v` - Run specific test file with verbose output
-- `uv run pre-commit run --all-files` - Run all pre-commit checks
+- `uv run prek run --all-files` - Run all prek checks
 
 ## Code Coverage
 - `uv run pytest` - Run tests with coverage (reports configured in pyproject.toml)
