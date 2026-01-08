@@ -12,12 +12,31 @@ from asyncio import (
 )
 from contextlib import AsyncExitStack
 from datetime import timedelta
+from importlib.metadata import PackageNotFoundError, version
 from types import FrameType
 
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttConnection
+from souzu.config import CONFIG
 from souzu.job_tracking import monitor_printer_status
 from souzu.logs import log_reports
+from souzu.slack.thread import post_to_channel
+
+
+async def notify_startup() -> None:
+    """Post a startup notification to Slack. Failures are logged but not raised."""
+    try:
+        souzu_version = version("souzu")
+    except PackageNotFoundError:
+        souzu_version = "unknown"
+
+    try:
+        await post_to_channel(
+            CONFIG.slack.error_notification_channel,
+            f"Souzu {souzu_version} started",
+        )
+    except Exception:
+        logging.exception("Failed to post startup notification")
 
 
 async def inner_loop() -> None:
@@ -41,6 +60,8 @@ async def inner_loop() -> None:
 
 
 async def monitor() -> None:
+    await notify_startup()
+
     loop = get_running_loop()
     exit_event = Event()
 

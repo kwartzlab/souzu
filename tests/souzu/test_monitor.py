@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 import pytest
 
 from souzu.bambu.discovery import BambuDevice
-from souzu.commands.monitor import monitor
+from souzu.commands.monitor import monitor, notify_startup
 
 
 # Helper function to create a completed future for testing
@@ -334,3 +334,77 @@ async def test_monitor_workflow_integration() -> None:
 
         # Verify signal handlers were cleaned up on exit
         assert mock_loop.remove_signal_handler.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_notify_startup_posts_version() -> None:
+    """Test that notify_startup posts the version to the error channel."""
+    with (
+        patch("souzu.commands.monitor.version", return_value="1.2.3"),
+        patch("souzu.commands.monitor.CONFIG") as mock_config,
+        patch("souzu.commands.monitor.post_to_channel") as mock_post,
+    ):
+        mock_config.slack.error_notification_channel = "test-channel"
+        mock_post.return_value = "12345.67890"
+
+        await notify_startup()
+
+        mock_post.assert_called_once_with("test-channel", "Souzu 1.2.3 started")
+
+
+@pytest.mark.asyncio
+async def test_notify_startup_handles_unknown_version() -> None:
+    """Test that notify_startup handles PackageNotFoundError gracefully."""
+    from importlib.metadata import PackageNotFoundError
+
+    with (
+        patch(
+            "souzu.commands.monitor.version", side_effect=PackageNotFoundError("souzu")
+        ),
+        patch("souzu.commands.monitor.CONFIG") as mock_config,
+        patch("souzu.commands.monitor.post_to_channel") as mock_post,
+    ):
+        mock_config.slack.error_notification_channel = "test-channel"
+        mock_post.return_value = "12345.67890"
+
+        await notify_startup()
+
+        mock_post.assert_called_once_with("test-channel", "Souzu unknown started")
+
+
+@pytest.mark.asyncio
+async def test_notify_startup_handles_slack_error() -> None:
+    """Test that notify_startup logs but doesn't raise on Slack errors."""
+    with (
+        patch("souzu.commands.monitor.version", return_value="1.0.0"),
+        patch("souzu.commands.monitor.CONFIG") as mock_config,
+        patch("souzu.commands.monitor.post_to_channel") as mock_post,
+        patch("souzu.commands.monitor.logging") as mock_logging,
+    ):
+        mock_config.slack.error_notification_channel = "test-channel"
+        mock_post.side_effect = Exception("Slack API error")
+
+        # Should not raise
+        await notify_startup()
+
+        # Should log the exception
+        mock_logging.exception.assert_called_once_with(
+            "Failed to post startup notification"
+        )
+
+
+@pytest.mark.asyncio
+async def test_monitor_calls_notify_startup() -> None:
+    """Test that monitor calls notify_startup on start."""
+    with (
+        patch("souzu.commands.monitor.notify_startup") as mock_notify,
+        patch("souzu.commands.monitor.get_running_loop"),
+        patch("souzu.commands.monitor.Event"),
+        patch("souzu.commands.monitor.wait") as mock_wait,
+        patch("souzu.commands.monitor.create_task"),
+    ):
+        mock_wait.side_effect = CancelledError()
+
+        await monitor()
+
+        mock_notify.assert_awaited_once()
