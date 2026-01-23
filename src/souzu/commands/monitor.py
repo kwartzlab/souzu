@@ -23,20 +23,21 @@ from souzu.logs import log_reports
 from souzu.slack.thread import post_to_channel
 
 
-async def notify_startup() -> None:
-    """Post a startup notification to Slack. Failures are logged but not raised."""
+async def notify_startup() -> str | None:
+    """Post a startup notification to Slack. Returns message ts, or None on failure."""
     try:
         souzu_version = version("souzu")
     except PackageNotFoundError:
         souzu_version = "unknown"
 
     try:
-        await post_to_channel(
+        return await post_to_channel(
             CONFIG.slack.error_notification_channel,
             f"Souzu {souzu_version} started",
         )
     except Exception:
         logging.exception("Failed to post startup notification")
+        return None
 
 
 async def inner_loop() -> None:
