@@ -1,10 +1,12 @@
 import logging
 import signal
 from asyncio import (
+    ALL_COMPLETED,
     FIRST_COMPLETED,
     CancelledError,
     Event,
     Queue,
+    Task,
     TaskGroup,
     create_task,
     get_running_loop,
@@ -20,7 +22,8 @@ from souzu.bambu.mqtt import BambuMqttConnection
 from souzu.config import CONFIG
 from souzu.job_tracking import monitor_printer_status
 from souzu.logs import log_reports
-from souzu.slack.thread import post_to_channel
+from souzu.slack.monitor import SlackMessage, watch_thread
+from souzu.slack.thread import post_to_channel, post_to_thread
 
 
 async def notify_startup() -> str | None:
@@ -61,7 +64,7 @@ async def inner_loop() -> None:
 
 
 async def monitor() -> None:
-    await notify_startup()
+    startup_ts = await notify_startup()
 
     loop = get_running_loop()
     exit_event = Event()
@@ -72,14 +75,34 @@ async def monitor() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, exit_handler, sig, None)
 
-    try:
-        await wait(
-            [
-                create_task(inner_loop()),
-                create_task(exit_event.wait()),
-            ],
-            return_when=FIRST_COMPLETED,
+    tasks: list[Task[object]] = [
+        create_task(inner_loop()),
+        create_task(exit_event.wait()),
+    ]
+    if startup_ts and CONFIG.slack.error_notification_channel:
+
+        async def on_startup_reply(msg: SlackMessage) -> None:
+            await post_to_thread(
+                CONFIG.slack.error_notification_channel,
+                startup_ts,
+                f"I saw this message: {msg.text}",
+            )
+
+        tasks.append(
+            create_task(
+                watch_thread(
+                    CONFIG.slack.error_notification_channel,
+                    startup_ts,
+                    on_startup_reply,
+                )
+            )
         )
+
+    try:
+        done, pending = await wait(tasks, return_when=FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await wait(pending, return_when=ALL_COMPLETED)
     except CancelledError:
         pass
     finally:

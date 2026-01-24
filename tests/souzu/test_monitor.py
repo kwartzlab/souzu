@@ -284,22 +284,21 @@ async def test_monitor_handles_cancelled_error() -> None:
 @pytest.mark.asyncio
 async def test_monitor_workflow_integration() -> None:
     """Integration test for the monitor workflow, simulating a complete run."""
+    from asyncio import ALL_COMPLETED, FIRST_COMPLETED
+
     # Setup test mocks
     mock_loop = Mock()
     mock_exit_event = Mock()
     mock_exit_event.wait = AsyncMock()
     mock_exit_event.wait.return_value = None  # Just returns normally when awaited
 
-    # Create a mock for wait that allows us to simulate task completion
-    wait_result = Mock()
-    mock_wait = AsyncMock(return_value=wait_result)
-
     # Create mock tasks
     mock_inner_loop_task = Mock()
     mock_exit_wait_task = Mock()
 
     # Set up the mocks to simulate inner_loop completing first
-    wait_result.done.return_value = [mock_inner_loop_task]
+    # wait returns (done, pending) tuple
+    mock_wait = AsyncMock(return_value=({mock_inner_loop_task}, {mock_exit_wait_task}))
 
     with (
         patch("souzu.commands.monitor.get_running_loop", return_value=mock_loop),
@@ -307,7 +306,13 @@ async def test_monitor_workflow_integration() -> None:
         patch("souzu.commands.monitor.wait", mock_wait),
         patch("souzu.commands.monitor.create_task") as mock_create_task,
         patch("souzu.commands.monitor.inner_loop"),
+        patch(
+            "souzu.commands.monitor.notify_startup", new_callable=AsyncMock
+        ) as mock_notify,
     ):
+        # notify_startup returns None so watch_thread won't be started
+        mock_notify.return_value = None
+
         # Set up create_task to return our mocks
         mock_create_task.side_effect = [mock_inner_loop_task, mock_exit_wait_task]
 
@@ -317,20 +322,21 @@ async def test_monitor_workflow_integration() -> None:
         # Verify signal handlers were registered
         assert mock_loop.add_signal_handler.call_count == 2
 
-        # Verify both tasks were created
+        # Verify both tasks were created (inner_loop and exit_event.wait)
         assert mock_create_task.call_count == 2
 
-        # Don't check the exact coroutine objects as they can differ between test runs
+        # Verify wait was called twice: once for FIRST_COMPLETED, once for ALL_COMPLETED
+        assert mock_wait.call_count == 2
 
-        # Verify wait was called with two tasks and FIRST_COMPLETED
-        mock_wait.assert_called_once()
-        wait_args, wait_kwargs = mock_wait.call_args
-        assert len(wait_args[0]) == 2
+        # Check first call (FIRST_COMPLETED)
+        first_call_args, first_call_kwargs = mock_wait.call_args_list[0]
+        assert len(first_call_args[0]) == 2
+        assert isinstance(first_call_args[0], list)
+        assert first_call_kwargs.get("return_when") == FIRST_COMPLETED
 
-        # Just check that the two tasks were passed to wait
-        assert isinstance(wait_args[0], list)
-        assert len(wait_args[0]) == 2
-        assert wait_kwargs.get('return_when') == 'FIRST_COMPLETED'
+        # Check second call (ALL_COMPLETED for pending tasks)
+        second_call_args, second_call_kwargs = mock_wait.call_args_list[1]
+        assert second_call_kwargs.get("return_when") == ALL_COMPLETED
 
         # Verify signal handlers were cleaned up on exit
         assert mock_loop.remove_signal_handler.call_count == 2
