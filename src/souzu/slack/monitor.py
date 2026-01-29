@@ -17,6 +17,17 @@ _CLIENT = (
     else None
 )
 
+_BOT_USER_ID: str | None = None
+
+
+async def _get_bot_user_id() -> str | None:
+    """Get the bot's user ID, caching the result."""
+    global _BOT_USER_ID
+    if _BOT_USER_ID is None and _CLIENT is not None:
+        response = await _CLIENT.auth_test()
+        _BOT_USER_ID = response.get("user_id")
+    return _BOT_USER_ID
+
 
 @frozen
 class SlackMessage:
@@ -31,11 +42,13 @@ async def _fetch_replies(
     channel: str,
     thread_ts: str,
     after_ts: str | None = None,
+    include_own_messages: bool = False,
 ) -> list[SlackMessage]:
     """
     Fetch replies from a Slack thread, optionally filtering to messages after a timestamp.
 
     Returns messages in chronological order (oldest first).
+    By default, excludes the bot's own messages to prevent infinite reply loops.
     """
     if _CLIENT is None:
         return []
@@ -45,12 +58,16 @@ async def _fetch_replies(
         ts=thread_ts,
     )
 
+    bot_user_id = await _get_bot_user_id() if not include_own_messages else None
+
     messages: list[SlackMessage] = []
     msg: dict[str, Any]
     for msg in response.get("messages", []):
         if msg["ts"] == thread_ts:
             continue
         if after_ts is not None and msg["ts"] <= after_ts:
+            continue
+        if not include_own_messages and msg.get("user") == bot_user_id:
             continue
         messages.append(
             SlackMessage(

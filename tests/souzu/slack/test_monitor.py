@@ -276,3 +276,51 @@ async def test_watch_thread_continues_on_callback_error(
 
     assert "Error in on_reply callback" in caplog.text
     assert any(msg.text == "Reply 2" for msg in received_messages)
+
+
+@pytest.mark.asyncio
+async def test_fetch_replies_excludes_own_messages_by_default(
+    mock_slack_client: AsyncMock,
+) -> None:
+    """Test that _fetch_replies excludes bot's own messages by default."""
+    from souzu.slack.monitor import _fetch_replies
+
+    mock_slack_client.auth_test = AsyncMock(return_value={"user_id": "BOT123"})
+    mock_slack_client.conversations_replies.return_value = {
+        "messages": [
+            {"ts": "1234.5678", "text": "Parent", "user": "U111"},
+            {"ts": "1234.5679", "text": "User reply", "user": "U222"},
+            {"ts": "1234.5680", "text": "Bot reply", "user": "BOT123"},
+        ]
+    }
+
+    with patch("souzu.slack.monitor._CLIENT", mock_slack_client):
+        with patch("souzu.slack.monitor._BOT_USER_ID", None):
+            result = await _fetch_replies("C123", "1234.5678")
+
+    assert len(result) == 1
+    assert result[0].text == "User reply"
+    assert result[0].user == "U222"
+
+
+@pytest.mark.asyncio
+async def test_fetch_replies_includes_own_messages_when_requested(
+    mock_slack_client: AsyncMock,
+) -> None:
+    """Test that _fetch_replies can include bot's own messages."""
+    from souzu.slack.monitor import _fetch_replies
+
+    mock_slack_client.conversations_replies.return_value = {
+        "messages": [
+            {"ts": "1234.5678", "text": "Parent", "user": "U111"},
+            {"ts": "1234.5679", "text": "User reply", "user": "U222"},
+            {"ts": "1234.5680", "text": "Bot reply", "user": "BOT123"},
+        ]
+    }
+
+    with patch("souzu.slack.monitor._CLIENT", mock_slack_client):
+        result = await _fetch_replies("C123", "1234.5678", include_own_messages=True)
+
+    assert len(result) == 2
+    assert result[0].text == "User reply"
+    assert result[1].text == "Bot reply"
