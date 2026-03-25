@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from souzu.job_tracking import JobRegistry, JobState, PrinterState, PrintJob
+from souzu.slack.client import SlackClient
 from souzu.slack.handlers import register_job_handlers
 
 
@@ -23,7 +24,7 @@ def _make_mock_app_and_slack() -> tuple[MagicMock, MagicMock, dict[str, Any]]:
         return decorator
 
     mock_app.action = capture_action
-    mock_slack = MagicMock()
+    mock_slack = MagicMock(spec=SlackClient)
     mock_slack.app = mock_app
     return mock_app, mock_slack, handlers
 
@@ -57,7 +58,7 @@ class TestRegisterJobHandlers:
         assert "claim_print" in handlers
 
     def test_skips_when_no_app(self) -> None:
-        mock_slack = MagicMock()
+        mock_slack = MagicMock(spec=SlackClient)
         mock_slack.app = None
         # Should not raise
         register_job_handlers(mock_slack, {})
@@ -83,6 +84,13 @@ class TestClaimHandler:
         assert job is not None
         assert job.owner == "U999"
         mock_client.chat_postEphemeral.assert_not_awaited()
+        mock_client.chat_update.assert_awaited_once()
+        update_kwargs = mock_client.chat_update.call_args.kwargs
+        assert update_kwargs["channel"] == "C456"
+        assert update_kwargs["ts"] == thread_ts
+        assert any(
+            "Claimed by <@U999>" in str(block) for block in update_kwargs["blocks"]
+        )
 
     @pytest.mark.asyncio
     async def test_rejects_second_claimant(

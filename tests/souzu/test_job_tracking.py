@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 from concurrent.futures import CancelledError
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytz
@@ -237,7 +237,7 @@ async def test_update_thread_with_thread() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_thread_slack_error_edit() -> None:
+async def test_update_thread_slack_error_edit(mocker: MockerFixture) -> None:
     """Test handling Slack API errors in _update_thread during edit_message."""
     job = PrintJob(
         duration=timedelta(hours=2),
@@ -251,12 +251,11 @@ async def test_update_thread_slack_error_edit() -> None:
     mock_slack = AsyncMock(spec=SlackClient)
     mock_slack.edit_message.side_effect = SlackApiError("API error")
 
-    with patch("souzu.job_tracking.logging") as mock_logging:
-        await _update_thread(
-            mock_slack, job, device, "Edited message", "Update message"
-        )
+    mock_logging = mocker.patch("souzu.job_tracking.logging")
 
-        mock_logging.error.assert_called_once()
+    await _update_thread(mock_slack, job, device, "Edited message", "Update message")
+
+    mock_logging.error.assert_called_once()
 
     mock_slack.post_to_thread.assert_called_once_with(
         "test-channel",
@@ -380,28 +379,27 @@ async def test_monitor_printer_status(mocker: MockerFixture) -> None:
     mock_serializer = mocker.patch("souzu.job_tracking._STATE_SERIALIZER")
     mock_serializer.unstructure.return_value = {}
 
-    with (
-        patch("souzu.job_tracking._STATE_DIR", mock_state_dir),
-        patch("souzu.job_tracking._job_started", mock_job_started),
-        patch("souzu.job_tracking._job_paused", mock_job_paused),
-        patch("souzu.job_tracking._job_resumed", mock_job_resumed),
-        patch("souzu.job_tracking._job_completed", mock_job_completed),
-    ):
-        await monitor_printer_status(device, mock_connection, mock_slack, {})
+    mocker.patch("souzu.job_tracking._STATE_DIR", mock_state_dir)
+    mocker.patch("souzu.job_tracking._job_started", mock_job_started)
+    mocker.patch("souzu.job_tracking._job_paused", mock_job_paused)
+    mocker.patch("souzu.job_tracking._job_resumed", mock_job_resumed)
+    mocker.patch("souzu.job_tracking._job_completed", mock_job_completed)
 
-        mock_state_dir.mkdir.assert_called_once_with(exist_ok=True, parents=True)
-        mock_state_file.exists.assert_called_once()
+    await monitor_printer_status(device, mock_connection, mock_slack, {})
 
-        assert (
-            mock_job_started.call_count
-            + mock_job_paused.call_count
-            + mock_job_resumed.call_count
-            + mock_job_completed.call_count
-            > 0
-        )
+    mock_state_dir.mkdir.assert_called_once_with(exist_ok=True, parents=True)
+    mock_state_file.exists.assert_called_once()
 
-        mock_state_file.open.assert_called()
-        mock_open_cm.write.assert_called()
+    assert (
+        mock_job_started.call_count
+        + mock_job_paused.call_count
+        + mock_job_resumed.call_count
+        + mock_job_completed.call_count
+        > 0
+    )
+
+    mock_state_file.open.assert_called()
+    mock_open_cm.write.assert_called()
 
 
 @pytest.mark.asyncio
@@ -456,19 +454,18 @@ async def test_monitor_printer_status_load_existing_state(
 
     mock_job_completed = AsyncMock()
 
-    with (
-        patch("souzu.job_tracking._STATE_DIR", mock_state_dir),
-        patch("souzu.job_tracking._job_completed", mock_job_completed),
-    ):
-        await monitor_printer_status(device, mock_connection, mock_slack, {})
+    mocker.patch("souzu.job_tracking._STATE_DIR", mock_state_dir)
+    mocker.patch("souzu.job_tracking._job_completed", mock_job_completed)
 
-        mock_state_file.exists.assert_called_once()
-        mock_state_file.open.assert_called()
-        mock_read_cm.read.assert_called_once()
-        mock_json.loads.assert_called_once()
-        mock_serializer.structure.assert_called_once()
+    await monitor_printer_status(device, mock_connection, mock_slack, {})
 
-        assert mock_job_completed.call_count > 0
+    mock_state_file.exists.assert_called_once()
+    mock_state_file.open.assert_called()
+    mock_read_cm.read.assert_called_once()
+    mock_json.loads.assert_called_once()
+    mock_serializer.structure.assert_called_once()
+
+    assert mock_job_completed.call_count > 0
 
 
 @pytest.mark.asyncio
@@ -494,17 +491,16 @@ async def test_monitor_printer_status_exception_handling(
     mock_state_dir = AsyncMock()
     mock_state_dir.mkdir = AsyncMock()
 
-    with patch("souzu.job_tracking._STATE_DIR", mock_state_dir):
-        await monitor_printer_status(device, mock_connection, mock_slack, {})
+    mocker.patch("souzu.job_tracking._STATE_DIR", mock_state_dir)
 
-        mock_logging.exception.assert_called_once()
-        assert (
-            "Error while monitoring printer" in mock_logging.exception.call_args[0][0]
-        )
+    await monitor_printer_status(device, mock_connection, mock_slack, {})
+
+    mock_logging.exception.assert_called_once()
+    assert "Error while monitoring printer" in mock_logging.exception.call_args[0][0]
 
 
 @pytest.mark.asyncio
-async def test_monitor_printer_status_cancelled_error() -> None:
+async def test_monitor_printer_status_cancelled_error(mocker: MockerFixture) -> None:
     """Test monitor_printer_status propagating CancelledError."""
     device = BambuDevice(
         device_id="TEST123",
@@ -523,9 +519,10 @@ async def test_monitor_printer_status_cancelled_error() -> None:
     mock_state_file.exists = AsyncMock(return_value=False)
     mock_state_dir.__truediv__ = MagicMock(return_value=mock_state_file)
 
-    with patch("souzu.job_tracking._STATE_DIR", mock_state_dir):
-        with pytest.raises(CancelledError):
-            await monitor_printer_status(device, mock_connection, mock_slack, {})
+    mocker.patch("souzu.job_tracking._STATE_DIR", mock_state_dir)
+
+    with pytest.raises(CancelledError):
+        await monitor_printer_status(device, mock_connection, mock_slack, {})
 
 
 def test_job_state_unstructure() -> None:
@@ -561,6 +558,7 @@ def test_printer_state_serialization_round_trip() -> None:
         slack_channel="test-channel",
         slack_thread_ts="1234.5678",
         start_message="Test job started",
+        owner="U123",
     )
     state = PrinterState(current_job=job)
 
@@ -576,3 +574,4 @@ def test_printer_state_serialization_round_trip() -> None:
     assert restructured.current_job.slack_channel == job.slack_channel
     assert restructured.current_job.slack_thread_ts == job.slack_thread_ts
     assert restructured.current_job.start_message == job.start_message
+    assert restructured.current_job.owner == job.owner

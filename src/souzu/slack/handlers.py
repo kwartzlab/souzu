@@ -45,3 +45,30 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
 
         job.owner = user_id
         logging.info(f"Print claimed by {user_name} ({user_id})")
+
+        # Update the message to show the claim
+        channel_id = body["channel"]["id"]
+        claimed_blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": message.get("text", "Print job"),
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Claimed by <@{user_id}>",
+                    },
+                ],
+            },
+        ]
+        await client.chat_update(
+            channel=channel_id,
+            ts=thread_ts,
+            text=message.get("text", "Print job"),
+            blocks=claimed_blocks,
+        )

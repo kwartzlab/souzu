@@ -116,6 +116,8 @@ async def test_device_processing_flow(mocker: MockerFixture) -> None:
     mock_tg = AsyncMock()
     mock_stack = AsyncMock()
     mock_connection = AsyncMock()
+    mock_slack = AsyncMock(spec=SlackClient)
+    mock_job_registry: dict[str, object] = {}
 
     mock_connection_class = Mock(return_value=mock_connection)
 
@@ -137,7 +139,7 @@ async def test_device_processing_flow(mocker: MockerFixture) -> None:
         mock_monitor_status.return_value = None
 
         mock_log_reports(device, connection)
-        mock_monitor_status(device, connection)
+        mock_monitor_status(device, connection, mock_slack, mock_job_registry)
 
         mock_tg.create_task(None)
         mock_tg.create_task(None)
@@ -156,7 +158,10 @@ async def test_device_processing_flow(mocker: MockerFixture) -> None:
 
     assert mock_monitor_status.call_count == 2
     mock_monitor_status.assert_has_calls(
-        [call(test_device1, mock_connection), call(test_device2, mock_connection)]
+        [
+            call(test_device1, mock_connection, mock_slack, mock_job_registry),
+            call(test_device2, mock_connection, mock_slack, mock_job_registry),
+        ]
     )
 
     assert mock_tg.create_task.call_count == 4
