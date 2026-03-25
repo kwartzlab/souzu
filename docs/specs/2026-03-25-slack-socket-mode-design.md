@@ -53,7 +53,7 @@ class SlackClient:
 
     # Outbound methods — work in all modes (no-op with no access_token)
     async def post_to_channel(self, channel: str | None, text: str, blocks: list | None = None) -> str | None: ...
-    async def post_to_thread(self, channel: str | None, thread_ts: str, text: str) -> str | None: ...
+    async def post_to_thread(self, channel: str | None, thread_ts: str, text: str, blocks: list | None = None) -> str | None: ...
     async def edit_message(self, channel: str | None, message_ts: str, text: str, blocks: list | None = None) -> None: ...
 
     # Bolt app for handler registration — None if no app_token
@@ -64,10 +64,13 @@ class SlackClient:
     def bot_user_id(self) -> str | None: ...
 ```
 
-- `blocks` parameter on `post_to_channel` and `edit_message` supports Block Kit
-  messages with interactive buttons. `text` serves as the notification fallback.
+- `blocks` parameter on all outbound methods supports Block Kit messages with
+  interactive buttons. `text` serves as the notification fallback.
 - Channel-is-None guard: log debug message and return None (preserves current behavior).
-- `SlackApiError` remains the custom exception, wrapping Bolt/SDK errors.
+- No-token mode: outbound methods silently return None (no exception). `SlackApiError`
+  is only raised for actual API call failures in access-token and full modes.
+- `SlackApiError` is defined in `client.py` (moved from the deleted `thread.py`),
+  wrapping Bolt/SDK errors.
 
 #### Bolt internals
 
@@ -78,11 +81,19 @@ self._app = AsyncApp(token=access_token)
 self._socket_handler = AsyncSocketModeHandler(self._app, app_token)
 ```
 
-`start()` calls `await self._socket_handler.start_async()`. The SDK manages its own
-reconnection. `stop()` calls `await self._socket_handler.close_async()`.
+`start()` calls `await self._socket_handler.connect_async()` (not `start_async()`,
+which blocks forever). The SDK manages its own reconnection. `stop()` calls
+`await self._socket_handler.disconnect_async()`.
+
+`start()` also calls `auth_test()` to cache `bot_user_id`. If this fails (e.g., invalid
+token), `start()` raises immediately — this is a configuration error that should surface
+at startup, not silently degrade at runtime.
 
 When only `access_token` is present, a plain `AsyncWebClient` is used for outbound
 calls, with no Bolt app or socket handler.
+
+The aiohttp-based adapter is used (`slack_bolt.adapter.socket_mode.async_handler`),
+since the project already depends on `aiohttp`.
 
 ### Event Handlers (`src/souzu/slack/handlers.py`)
 
@@ -90,9 +101,15 @@ Bridges Slack events to domain logic. Separate from `client.py` to keep the clie
 generic (knows about Slack, not about printers or jobs).
 
 ```python
-def register_job_handlers(slack: SlackClient) -> None:
+def register_job_handlers(slack: SlackClient, job_registry: JobRegistry) -> None:
     """Register interactive handlers on the Bolt app for job-related actions."""
 ```
+
+**Job registry:** Handlers need to look up `PrinterState` when a button is clicked.
+A shared `JobRegistry` (e.g., `dict[str, PrinterState]` keyed by Slack message
+timestamp) is populated by `job_tracking` when jobs start and read by handlers when
+interactive events arrive. The registry is created by the monitor command and passed to
+both `register_job_handlers` and `monitor_printer_status`.
 
 Uses Bolt's decorator API on `slack.app`:
 
@@ -100,7 +117,7 @@ Uses Bolt's decorator API on `slack.app`:
 @slack.app.action("claim_print")
 async def handle_claim(ack, body, client):
     await ack()
-    # Look up PrinterState by button value/message ts
+    # Look up PrinterState via job_registry[message_ts]
     # First claimant wins; already-claimed -> ephemeral rejection
     # Update message to show owner
 ```
@@ -136,8 +153,9 @@ Example `souzu.json`:
 
 ### Job Tracking Changes (`src/souzu/job_tracking.py`)
 
-- `monitor_printer_status` receives a `SlackClient` parameter instead of importing
-  module-level free functions.
+- `monitor_printer_status` receives a `SlackClient` and `JobRegistry` instead of
+  importing module-level free functions. It registers each active job's `PrinterState`
+  in the registry (keyed by Slack message timestamp) so interactive handlers can find it.
 - `PrintJob` gains an `owner: str | None` field to track who claimed a print.
 - `_job_started` posts messages with Block Kit blocks containing a "Claim" button.
 - Internal helpers (`_update_thread`, `_update_job`, etc.) receive the client as a
@@ -149,21 +167,25 @@ Becomes the assembly point:
 
 ```python
 async def monitor() -> None:
+    job_registry: JobRegistry = {}
+
     async with SlackClient(
         access_token=CONFIG.slack.access_token,
         app_token=CONFIG.slack.app_token,
     ) as slack:
         if slack.app:
-            register_job_handlers(slack)
+            register_job_handlers(slack, job_registry)
 
         startup_ts = await notify_startup(slack)
 
-        # Signal handling, inner_loop (receives slack), exit_event.wait()
+        # Signal handling, inner_loop(slack, job_registry), exit_event.wait()
         # No more watch_thread task.
 ```
 
 - `notify_startup` takes the `SlackClient` instead of using imported free functions.
-- `inner_loop` passes the client through to `monitor_printer_status`.
+- `inner_loop` receives `slack: SlackClient` and `job_registry: JobRegistry` as
+  parameters, passing both through to `monitor_printer_status`. Other tasks it creates
+  (`log_reports`, `discover_bambu_devices`) are unchanged.
 - The `watch_thread` polling task and its callback are removed entirely.
 - Socket mode runs within the `SlackClient` context manager lifecycle.
 
