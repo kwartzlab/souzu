@@ -3,10 +3,21 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from souzu.job_tracking import JobRegistry, PrinterState
+from souzu.job_tracking import (
+    JobAction,
+    JobRegistry,
+    PrinterState,
+    PrintJob,
+    available_actions,
+)
 
 if TYPE_CHECKING:
     from souzu.slack.client import SlackClient
+
+
+def can_control_job(user_id: str, job: PrintJob) -> bool:
+    """Whether this user is allowed to control this job."""
+    return job.owner is not None and job.owner == user_id
 
 
 def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> None:
@@ -66,3 +77,57 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
             thread_ts=thread_ts,
             text=f"<@{user_id}> claimed this print.",
         )
+
+    action_ids = [f"print_{action.value}" for action in JobAction]
+
+    for action_id in action_ids:
+
+        @slack.app.action(action_id)
+        async def handle_action(
+            ack: Any,  # noqa: ANN401
+            body: Any,  # noqa: ANN401
+            client: Any,  # noqa: ANN401
+            _action_id: str = action_id,
+        ) -> None:
+            await ack()
+
+            user_id: str = body["user"]["id"]
+            message: dict[str, Any] = body.get("message", {})
+            parent_ts: str | None = message.get("thread_ts")
+
+            if parent_ts is None or parent_ts not in job_registry:
+                return
+
+            state = job_registry[parent_ts]
+            if state.current_job is None:
+                return
+
+            job = state.current_job
+
+            action_value = _action_id.removeprefix("print_")
+            try:
+                action = JobAction(action_value)
+            except ValueError:
+                return
+
+            if action not in available_actions(job):
+                await client.chat_postEphemeral(
+                    channel=body["channel"]["id"],
+                    user=user_id,
+                    text="This action isn't available right now.",
+                )
+                return
+
+            if not can_control_job(user_id, job):
+                await client.chat_postEphemeral(
+                    channel=body["channel"]["id"],
+                    user=user_id,
+                    text="Sorry, this isn't your print.",
+                )
+                return
+
+            await client.chat_postEphemeral(
+                channel=body["channel"]["id"],
+                user=user_id,
+                text="Sorry, this isn't implemented yet, but stay tuned!",
+            )

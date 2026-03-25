@@ -8,7 +8,7 @@ import pytest
 
 from souzu.job_tracking import JobRegistry, JobState, PrinterState, PrintJob
 from souzu.slack.client import SlackClient
-from souzu.slack.handlers import register_job_handlers
+from souzu.slack.handlers import can_control_job, register_job_handlers
 
 
 def _make_mock_app_and_slack() -> tuple[MagicMock, MagicMock, dict[str, Any]]:
@@ -157,3 +157,186 @@ class TestClaimHandler:
 
         mock_ack.assert_awaited_once()
         mock_client.chat_postEphemeral.assert_not_awaited()
+
+
+class TestCanControlJob:
+    def test_owner_matches(self) -> None:
+        job = PrintJob(duration=timedelta(hours=1), owner="U_ALICE")
+        assert can_control_job("U_ALICE", job) is True
+
+    def test_owner_mismatch(self) -> None:
+        job = PrintJob(duration=timedelta(hours=1), owner="U_ALICE")
+        assert can_control_job("U_BOB", job) is False
+
+    def test_unclaimed(self) -> None:
+        job = PrintJob(duration=timedelta(hours=1))
+        assert can_control_job("U_ALICE", job) is False
+
+
+def _make_action_body(
+    thread_ts: str,
+    message_ts: str = "9999.0001",
+    user_id: str = "U123",
+    user_name: str = "testuser",
+    channel_id: str = "C456",
+) -> dict[str, Any]:
+    """Build a body dict as Slack sends for an action on a thread reply."""
+    return {
+        "user": {"id": user_id, "name": user_name},
+        "message": {"ts": message_ts, "thread_ts": thread_ts},
+        "channel": {"id": channel_id},
+    }
+
+
+class TestActionHandlers:
+    @pytest.mark.asyncio
+    async def test_authorized_stub_response(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str],
+    ) -> None:
+        """Authorized owner gets the 'not implemented' stub message."""
+        registry, thread_ts = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.owner = "U_OWNER"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_OWNER")
+
+        await handlers["print_pause"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_ack.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_awaited_once()
+        assert (
+            "implemented yet" in mock_client.chat_postEphemeral.call_args.kwargs["text"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_rejection(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str],
+    ) -> None:
+        """Non-owner gets 'not your print' rejection."""
+        registry, thread_ts = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.owner = "U_OWNER"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_STRANGER")
+
+        await handlers["print_pause"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_ack.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_awaited_once()
+        assert (
+            "isn't your print"
+            in mock_client.chat_postEphemeral.call_args.kwargs["text"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_wrong_state(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str],
+    ) -> None:
+        """Pause on an already-paused job sends 'not available' ephemeral."""
+        registry, thread_ts = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.state = JobState.PAUSED
+        state.current_job.owner = "U_OWNER"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_OWNER")
+
+        await handlers["print_pause"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_ack.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_awaited_once()
+        assert (
+            "isn't available right now"
+            in mock_client.chat_postEphemeral.call_args.kwargs["text"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_unknown_job(self) -> None:
+        """Action on unknown thread returns silently."""
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, {})
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body("unknown.ts")
+
+        await handlers["print_pause"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_ack.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_current_job(self) -> None:
+        """Action when current_job is None returns silently."""
+        thread_ts = "1234567890.123456"
+        registry: JobRegistry = {thread_ts: PrinterState(current_job=None)}
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts)
+
+        await handlers["print_cancel"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_ack.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_resume_handler_authorized_on_paused_job(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str],
+    ) -> None:
+        """Resume on a paused job by owner gets the stub response."""
+        registry, thread_ts = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.state = JobState.PAUSED
+        state.current_job.owner = "U_OWNER"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_OWNER")
+
+        await handlers["print_resume"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_ack.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_awaited_once()
+        assert (
+            "implemented yet" in mock_client.chat_postEphemeral.call_args.kwargs["text"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_all_four_action_handlers_registered(self) -> None:
+        """Verify all four action handlers are registered."""
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, {})
+
+        assert "print_pause" in handlers
+        assert "print_resume" in handlers
+        assert "print_cancel" in handlers
+        assert "print_photo" in handlers
