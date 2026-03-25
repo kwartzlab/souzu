@@ -57,6 +57,13 @@ _STATE_SERIALIZER.register_structure_hook(
 )
 
 
+class JobAction(Enum):
+    PAUSE = "pause"
+    RESUME = "resume"
+    CANCEL = "cancel"
+    PHOTO = "photo"
+
+
 @define
 class PrintJob:
     duration: timedelta
@@ -66,6 +73,18 @@ class PrintJob:
     slack_thread_ts: str | None = None
     start_message: str | None = None
     owner: str | None = None
+    actions_ts: str | None = None
+
+
+def available_actions(job: PrintJob | None) -> list[JobAction]:
+    """Return the valid actions for a job's current state."""
+    if job is None:
+        return []
+    if job.state == JobState.RUNNING:
+        return [JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO]
+    if job.state == JobState.PAUSED:
+        return [JobAction.RESUME, JobAction.CANCEL, JobAction.PHOTO]
+    return []
 
 
 @define

@@ -12,6 +12,7 @@ from pytest_mock import MockerFixture
 from souzu.bambu.discovery import BambuDevice
 from souzu.bambu.mqtt import BambuStatusReport
 from souzu.job_tracking import (
+    JobAction,
     JobState,
     PrinterState,
     PrintJob,
@@ -21,6 +22,7 @@ from souzu.job_tracking import (
     _format_time,
     _round_up,
     _update_thread,
+    available_actions,
     monitor_printer_status,
 )
 from souzu.slack.client import SlackApiError, SlackClient
@@ -599,3 +601,31 @@ def test_printer_state_serialization_round_trip() -> None:
     assert restructured.current_job.slack_thread_ts == job.slack_thread_ts
     assert restructured.current_job.start_message == job.start_message
     assert restructured.current_job.owner == job.owner
+
+
+def test_job_action_enum() -> None:
+    assert JobAction.PAUSE.value == "pause"
+    assert JobAction.RESUME.value == "resume"
+    assert JobAction.CANCEL.value == "cancel"
+    assert JobAction.PHOTO.value == "photo"
+
+
+def test_available_actions_running() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
+    actions = available_actions(job)
+    assert actions == [JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO]
+
+
+def test_available_actions_paused() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED)
+    actions = available_actions(job)
+    assert actions == [JobAction.RESUME, JobAction.CANCEL, JobAction.PHOTO]
+
+
+def test_available_actions_none() -> None:
+    assert available_actions(None) == []
+
+
+def test_print_job_actions_ts_default() -> None:
+    job = PrintJob(duration=timedelta(hours=1))
+    assert job.actions_ts is None
