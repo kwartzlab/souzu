@@ -20,6 +20,7 @@ from souzu.job_tracking import (
     _format_duration,
     _format_eta,
     _format_time,
+    _job_started,
     _round_up,
     _update_thread,
     available_actions,
@@ -834,3 +835,39 @@ def test_build_terminal_actions_blocks() -> None:
     assert len(blocks) == 1
     assert blocks[0]["type"] == "context"
     assert "print completed" in blocks[0]["elements"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
+    """Test that _job_started posts an actions message after the parent message."""
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.slack.print_notification_channel = "C_PRINTS"
+    mock_config.timezone = pytz.UTC
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = datetime(
+        2026, 1, 1, 12, 0, 0, tzinfo=pytz.UTC
+    )
+
+    mock_slack = AsyncMock(spec=SlackClient)
+    # First post_to_channel returns parent ts, then post_to_thread returns actions ts
+    mock_slack.post_to_channel.return_value = "1111.0001"
+    mock_slack.post_to_thread.return_value = "1111.0002"
+
+    report = MagicMock(spec=BambuStatusReport)
+    report.mc_remaining_time = 60
+
+    state = PrinterState()
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    job_registry: dict[str, PrinterState] = {}
+
+    await _job_started(mock_slack, report, state, device, job_registry)
+
+    assert state.current_job is not None
+    assert state.current_job.actions_ts == "1111.0002"
+
+    # Verify actions message was posted in thread
+    mock_slack.post_to_thread.assert_called_once()
+    call_kwargs = mock_slack.post_to_thread.call_args.kwargs
+    assert "blocks" in call_kwargs
+    action_ids = [e["action_id"] for e in call_kwargs["blocks"][0]["elements"]]
+    assert "print_pause" in action_ids

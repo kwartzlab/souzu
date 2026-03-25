@@ -392,6 +392,19 @@ async def _job_started(
     state.current_job = job
     if job.slack_thread_ts is not None:
         job_registry[job.slack_thread_ts] = state
+        actions = available_actions(job)
+        if actions:
+            action_blocks = build_actions_blocks(actions)
+            try:
+                actions_ts = await slack.post_to_thread(
+                    CONFIG.slack.print_notification_channel,
+                    job.slack_thread_ts,
+                    "Actions",
+                    blocks=action_blocks,
+                )
+                job.actions_ts = actions_ts
+            except SlackApiError as e:
+                logging.error(f"Failed to post actions message: {e}")
 
 
 async def _job_paused(
@@ -411,6 +424,7 @@ async def _job_paused(
         f"Print paused\nMessage from printer: {error_message}"
         if error_message
         else "Print paused!",
+        actions=[JobAction.RESUME, JobAction.CANCEL, JobAction.PHOTO],
     )
     state.current_job.state = JobState.PAUSED
     state.current_job.eta = None
@@ -432,6 +446,7 @@ async def _job_resumed(
         ":progress_bar:",
         f"Resumed, done around {_format_eta(eta)}",
         f"Print resumed, now done around {_format_eta(eta)}",
+        actions=[JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO],
     )
     state.current_job.state = JobState.RUNNING
     state.current_job.eta = eta
@@ -452,6 +467,8 @@ async def _job_failed(
             ":heavy_minus_sign:",
             "Cancelled",
             "Print cancelled",
+            actions=[],
+            terminal_reason="print cancelled",
         )
         state.current_job = None
     else:
@@ -463,6 +480,8 @@ async def _job_failed(
             ":x:",
             "Failed!",
             f"Print failed!\nMessage from printer: {error_message}",
+            actions=[],
+            terminal_reason="print failed",
         )
         state.current_job = None
 
@@ -481,6 +500,8 @@ async def _job_completed(
         ":white_check_mark:",
         "Finished!",
         "Print finished!",
+        actions=[],
+        terminal_reason="print completed",
     )
     state.current_job = None
 
@@ -499,6 +520,8 @@ async def _job_tracking_lost(
         ":question:",
         "Tracking lost",
         "Lost tracking for print job - maybe the printer was disconnected?",
+        actions=[],
+        terminal_reason="print tracking lost",
     )
     state.current_job = None
 
