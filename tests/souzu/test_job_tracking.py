@@ -585,6 +585,7 @@ def test_printer_state_serialization_round_trip() -> None:
         slack_thread_ts="1234.5678",
         start_message="Test job started",
         owner="U123",
+        actions_ts="9876.5432",
     )
     state = PrinterState(current_job=job)
 
@@ -601,6 +602,7 @@ def test_printer_state_serialization_round_trip() -> None:
     assert restructured.current_job.slack_thread_ts == job.slack_thread_ts
     assert restructured.current_job.start_message == job.start_message
     assert restructured.current_job.owner == job.owner
+    assert restructured.current_job.actions_ts == job.actions_ts
 
 
 def test_job_action_enum() -> None:
