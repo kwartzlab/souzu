@@ -180,20 +180,24 @@ _ACTION_STYLES: dict[JobAction, str] = {
 
 
 def build_actions_blocks(actions: list[JobAction]) -> list[dict[str, Any]]:
-    """Build Block Kit blocks for the actions message."""
+    """Build Block Kit blocks for the actions message.
+
+    TODO: Replace stub with actual action buttons once handlers are implemented.
+    """
     if not actions:
         return []
-    elements: list[dict[str, Any]] = []
-    for action in actions:
-        btn: dict[str, Any] = {
-            "type": "button",
-            "text": {"type": "plain_text", "text": _ACTION_LABELS[action]},
-            "action_id": f"print_{action.value}",
+    return [
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "Actions coming soon: "
+                    + ", ".join(_ACTION_LABELS[a] for a in actions),
+                },
+            ],
         }
-        if action in _ACTION_STYLES:
-            btn["style"] = _ACTION_STYLES[action]
-        elements.append(btn)
-    return [{"type": "actions", "elements": elements}]
+    ]
 
 
 def build_terminal_actions_blocks(reason: str) -> list[dict[str, Any]]:
@@ -550,10 +554,6 @@ async def monitor_printer_status(
                     and state.current_job.slack_thread_ts is not None
                 ):
                     job_registry[state.current_job.slack_thread_ts] = state
-                    logging.info(
-                        f"Registered persisted job in registry: "
-                        f"thread_ts={state.current_job.slack_thread_ts}"
-                    )
         else:
             state = PrinterState()
 

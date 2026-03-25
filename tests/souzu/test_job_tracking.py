@@ -797,32 +797,19 @@ def test_build_actions_blocks_running() -> None:
     job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
     blocks = build_actions_blocks(available_actions(job))
     assert len(blocks) == 1
-    assert blocks[0]["type"] == "actions"
-    action_ids = [e["action_id"] for e in blocks[0]["elements"]]
-    assert action_ids == ["print_pause", "print_cancel", "print_photo"]
+    assert blocks[0]["type"] == "context"
+    text = blocks[0]["elements"][0]["text"]
+    assert "Pause" in text
+    assert "Cancel" in text
+    assert "Photo" in text
 
 
 def test_build_actions_blocks_paused() -> None:
     job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED)
     blocks = build_actions_blocks(available_actions(job))
-    action_ids = [e["action_id"] for e in blocks[0]["elements"]]
-    assert action_ids == ["print_resume", "print_cancel", "print_photo"]
-
-
-def test_build_actions_blocks_cancel_is_danger() -> None:
-    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
-    blocks = build_actions_blocks(available_actions(job))
-    cancel_btn = [e for e in blocks[0]["elements"] if e["action_id"] == "print_cancel"][
-        0
-    ]
-    assert cancel_btn["style"] == "danger"
-
-
-def test_build_actions_blocks_pause_has_no_style() -> None:
-    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
-    blocks = build_actions_blocks(available_actions(job))
-    pause_btn = [e for e in blocks[0]["elements"] if e["action_id"] == "print_pause"][0]
-    assert "style" not in pause_btn
+    text = blocks[0]["elements"][0]["text"]
+    assert "Resume" in text
+    assert "Cancel" in text
 
 
 def test_build_actions_blocks_empty() -> None:
@@ -869,5 +856,4 @@ async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
     mock_slack.post_to_thread.assert_called_once()
     call_kwargs = mock_slack.post_to_thread.call_args.kwargs
     assert "blocks" in call_kwargs
-    action_ids = [e["action_id"] for e in call_kwargs["blocks"][0]["elements"]]
-    assert "print_pause" in action_ids
+    assert "Pause" in call_kwargs["blocks"][0]["elements"][0]["text"]

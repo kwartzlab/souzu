@@ -88,26 +88,16 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
             client: Any,  # noqa: ANN401
         ) -> None:
             await ack()
-            logging.info(f"Action handler invoked: {bound_action_id}")
 
             user_id: str = body["user"]["id"]
             message: dict[str, Any] = body.get("message", {})
             parent_ts: str | None = message.get("thread_ts")
 
-            logging.info(
-                f"Action lookup: parent_ts={parent_ts}, "
-                f"registry_keys={list(job_registry.keys())}"
-            )
-
             if parent_ts is None or parent_ts not in job_registry:
-                logging.warning(
-                    f"Action {bound_action_id}: no match for parent_ts={parent_ts}"
-                )
                 return
 
             state = job_registry[parent_ts]
             if state.current_job is None:
-                logging.warning(f"Action {bound_action_id}: no current job")
                 return
 
             job = state.current_job
@@ -116,14 +106,7 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
             try:
                 action = JobAction(action_value)
             except ValueError:
-                logging.warning(f"Action {bound_action_id}: invalid action value")
                 return
-
-            actions = available_actions(job)
-            logging.info(
-                f"Action {bound_action_id}: job.state={job.state}, "
-                f"available={actions}, owner={job.owner}, user={user_id}"
-            )
 
             async def _ephemeral(text: str) -> None:
                 try:
@@ -136,7 +119,7 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 except Exception:
                     logging.exception("Failed to post ephemeral message")
 
-            if action not in actions:
+            if action not in available_actions(job):
                 await _ephemeral("This action isn't available right now.")
                 return
 
@@ -144,7 +127,6 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 await _ephemeral("Sorry, this isn't your print.")
                 return
 
-            logging.info(f"Action {bound_action_id}: sending stub response")
             await _ephemeral("Sorry, this isn't implemented yet, but stay tuned!")
 
         return handle_action
