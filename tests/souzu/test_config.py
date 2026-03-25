@@ -310,6 +310,21 @@ def test_config_file_persistence() -> None:
             temp_path.unlink()
 
 
+def test_slack_config_with_app_token() -> None:
+    """Test that app_token can be structured and round-tripped."""
+    config_dict = {
+        "slack": {
+            "access_token": "xoxb-test",
+            "app_token": "xapp-test",
+            "print_notification_channel": "C123",
+            "error_notification_channel": "C456",
+        }
+    }
+    config = SERIALIZER.structure(config_dict, Config)
+    assert config.slack.app_token == "xapp-test"  # noqa: S105 - Test token, not real
+    assert config.slack.access_token == "xoxb-test"  # noqa: S105 - Test token, not real
+
+
 @patch("souzu.config._CONFIG_FILE")
 def test_config_loading_file_not_exists(mock_config_file: MagicMock) -> None:
     """Test loading default configuration when file doesn't exist."""

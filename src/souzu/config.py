@@ -32,6 +32,7 @@ class PrinterConfig:
 @frozen
 class SlackConfig:
     access_token: str | None = None
+    app_token: str | None = None
     print_notification_channel: str | None = None
     error_notification_channel: str | None = None
 
