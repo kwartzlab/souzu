@@ -124,28 +124,26 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 f"available={actions}, owner={job.owner}, user={user_id}"
             )
 
+            async def _ephemeral(text: str) -> None:
+                try:
+                    await client.chat_postEphemeral(
+                        channel=body["channel"]["id"],
+                        user=user_id,
+                        text=text,
+                    )
+                except Exception:
+                    logging.exception("Failed to post ephemeral message")
+
             if action not in actions:
-                await client.chat_postEphemeral(
-                    channel=body["channel"]["id"],
-                    user=user_id,
-                    text="This action isn't available right now.",
-                )
+                await _ephemeral("This action isn't available right now.")
                 return
 
             if not can_control_job(user_id, job):
-                await client.chat_postEphemeral(
-                    channel=body["channel"]["id"],
-                    user=user_id,
-                    text="Sorry, this isn't your print.",
-                )
+                await _ephemeral("Sorry, this isn't your print.")
                 return
 
             logging.info(f"Action {bound_action_id}: sending stub response")
-            await client.chat_postEphemeral(
-                channel=body["channel"]["id"],
-                user=user_id,
-                text="Sorry, this isn't implemented yet, but stay tuned!",
-            )
+            await _ephemeral("Sorry, this isn't implemented yet, but stay tuned!")
 
         return handle_action
 
