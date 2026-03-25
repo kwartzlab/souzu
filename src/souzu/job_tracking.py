@@ -545,6 +545,11 @@ async def monitor_printer_status(
                 state_str = json.loads(await f.read())
                 logging.info(f"Loading state file {state_file}")
                 state = _STATE_SERIALIZER.structure(state_str, PrinterState)
+                if (
+                    state.current_job is not None
+                    and state.current_job.slack_thread_ts is not None
+                ):
+                    job_registry[state.current_job.slack_thread_ts] = state
         else:
             state = PrinterState()
 
