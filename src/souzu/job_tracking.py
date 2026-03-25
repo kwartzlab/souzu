@@ -234,6 +234,9 @@ async def _update_thread(
     device: BambuDevice,
     edited_message: str,
     update_message: str,
+    *,
+    actions: list[JobAction] | None = None,
+    terminal_reason: str | None = None,
 ) -> None:
     if job.slack_thread_ts is None:
         try:
@@ -272,6 +275,46 @@ async def _update_thread(
     except SlackApiError as e:
         logging.error(f"Failed to edit message: {e}")
 
+    # Manage the in-thread actions message
+    if actions is None:
+        pass  # No action update requested
+    elif actions:
+        action_blocks = build_actions_blocks(actions)
+        channel = job.slack_channel or CONFIG.slack.print_notification_channel
+        if job.actions_ts is not None:
+            try:
+                await slack.edit_message(
+                    channel,
+                    job.actions_ts,
+                    "Actions",
+                    blocks=action_blocks,
+                )
+            except SlackApiError:
+                logging.warning("Failed to edit actions message, posting new one")
+                job.actions_ts = None  # Fall through to post
+        if job.actions_ts is None:
+            try:
+                actions_ts = await slack.post_to_thread(
+                    channel,
+                    job.slack_thread_ts,
+                    "Actions",
+                    blocks=action_blocks,
+                )
+                job.actions_ts = actions_ts
+            except SlackApiError as e:
+                logging.error(f"Failed to post actions message: {e}")
+    elif job.actions_ts is not None and terminal_reason is not None:
+        terminal_blocks = build_terminal_actions_blocks(terminal_reason)
+        try:
+            await slack.edit_message(
+                job.slack_channel or CONFIG.slack.print_notification_channel,
+                job.actions_ts,
+                f"No actions available — {terminal_reason}.",
+                blocks=terminal_blocks,
+            )
+        except SlackApiError as e:
+            logging.error(f"Failed to clear actions message: {e}")
+
 
 async def _update_job(
     slack: SlackClient,
@@ -280,6 +323,9 @@ async def _update_job(
     emoji: str,
     short_message: str,
     long_message: str | None = None,
+    *,
+    actions: list[JobAction] | None = None,
+    terminal_reason: str | None = None,
 ) -> None:
     update_prefix = f"{emoji} {device.device_name}: "
     edit_prefix = (
@@ -291,6 +337,8 @@ async def _update_job(
         device,
         f"{edit_prefix}{short_message}",
         f"{update_prefix}{long_message or short_message}",
+        actions=actions,
+        terminal_reason=terminal_reason,
     )
 
 

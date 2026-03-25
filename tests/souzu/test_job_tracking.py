@@ -342,6 +342,163 @@ async def test_update_thread_no_channel(mocker: MockerFixture) -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_thread_posts_actions_message_when_no_actions_ts() -> None:
+    """When actions_ts is None and actions are non-empty, post a new actions message."""
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+        state=JobState.RUNNING,
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    mock_slack = AsyncMock(spec=SlackClient)
+    mock_slack.post_to_thread.side_effect = ["status_ts", "9999.0001"]
+
+    await _update_thread(
+        mock_slack,
+        job,
+        device,
+        "Edited",
+        "Update",
+        actions=[JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO],
+    )
+
+    # Should have posted an actions message in-thread
+    post_calls = mock_slack.post_to_thread.call_args_list
+    assert len(post_calls) == 2  # status update + actions message
+    actions_call = post_calls[1]
+    assert "blocks" in actions_call.kwargs or (len(actions_call.args) > 3)
+    assert job.actions_ts == "9999.0001"
+
+
+@pytest.mark.asyncio
+async def test_update_thread_edits_actions_message_when_actions_ts_exists() -> None:
+    """When actions_ts exists, edit the actions message."""
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+        actions_ts="8888.0001",
+        state=JobState.RUNNING,
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    await _update_thread(
+        mock_slack,
+        job,
+        device,
+        "Edited",
+        "Update",
+        actions=[JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO],
+    )
+
+    # Should have edited the actions message
+    edit_calls = mock_slack.edit_message.call_args_list
+    assert len(edit_calls) == 2  # parent edit + actions edit
+    actions_edit = edit_calls[1]
+    assert actions_edit.args[1] == "8888.0001"
+
+
+@pytest.mark.asyncio
+async def test_update_thread_clears_actions_on_terminal() -> None:
+    """When actions is empty and terminal_reason is set, edit to terminal block."""
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+        actions_ts="8888.0001",
+        state=JobState.RUNNING,
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    await _update_thread(
+        mock_slack,
+        job,
+        device,
+        "Edited",
+        "Update",
+        actions=[],
+        terminal_reason="print completed",
+    )
+
+    # Should have edited the actions message to terminal
+    edit_calls = mock_slack.edit_message.call_args_list
+    actions_edit = edit_calls[1]
+    assert "No actions available" in str(
+        actions_edit.kwargs.get("blocks", actions_edit.args)
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_thread_skips_actions_when_empty_and_no_ts() -> None:
+    """When actions is empty and no actions_ts exists, do nothing for actions."""
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+        state=JobState.RUNNING,
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    await _update_thread(
+        mock_slack,
+        job,
+        device,
+        "Edited",
+        "Update",
+        actions=[],
+        terminal_reason="print completed",
+    )
+
+    # Only one edit call (parent message), no actions edit
+    assert mock_slack.edit_message.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_update_thread_recovers_when_actions_edit_fails() -> None:
+    """When editing the actions message fails, post a new one and update actions_ts."""
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+        actions_ts="stale.0001",
+        state=JobState.RUNNING,
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    mock_slack = AsyncMock(spec=SlackClient)
+    # First edit_message (parent) succeeds; second (actions) fails
+    mock_slack.edit_message.side_effect = [None, SlackApiError("stale")]
+    mock_slack.post_to_thread.side_effect = ["status_ts", "new_actions.0002"]
+
+    await _update_thread(
+        mock_slack,
+        job,
+        device,
+        "Edited",
+        "Update",
+        actions=[JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO],
+    )
+
+    # Should have fallen back to posting a new actions message
+    post_calls = mock_slack.post_to_thread.call_args_list
+    assert len(post_calls) == 2  # status update + fallback actions post
+    assert job.actions_ts == "new_actions.0002"
+
+
+@pytest.mark.asyncio
 async def test_monitor_printer_status(mocker: MockerFixture) -> None:
     """Test monitor_printer_status with a complete print job lifecycle."""
     device = BambuDevice(
