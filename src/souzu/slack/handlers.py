@@ -126,10 +126,13 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
 
             async def _ephemeral(text: str) -> None:
                 try:
-                    await client.chat_postEphemeral(
+                    resp = await client.chat_postEphemeral(
                         channel=body["channel"]["id"],
                         user=user_id,
                         text=text,
+                    )
+                    logging.info(
+                        f"chat_postEphemeral response: type={type(resp)}, value={resp}"
                     )
                 except Exception:
                     logging.exception("Failed to post ephemeral message")
