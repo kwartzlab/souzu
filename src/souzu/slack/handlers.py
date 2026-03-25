@@ -46,29 +46,23 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
         job.owner = user_id
         logging.info(f"Print claimed by {user_name} ({user_id})")
 
-        # Update the message to show the claim
         channel_id = body["channel"]["id"]
-        claimed_blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": message.get("text", "Print job"),
-                },
-            },
-            {
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"Claimed by <@{user_id}>",
-                    },
-                ],
-            },
-        ]
+        message_text = message.get("text", "Print job")
+
+        # Update the parent message to show claim and remove the button
+        from souzu.job_tracking import _build_status_blocks
+
+        claimed_blocks = _build_status_blocks(message_text, user_id)
         await client.chat_update(
             channel=channel_id,
             ts=thread_ts,
-            text=message.get("text", "Print job"),
+            text=message_text,
             blocks=claimed_blocks,
+        )
+
+        # Post in-thread so the claimant gets notified of replies
+        await client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=f"<@{user_id}> claimed this print.",
         )

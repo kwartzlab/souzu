@@ -223,17 +223,41 @@ async def test_update_thread_with_thread() -> None:
 
     await _update_thread(mock_slack, job, device, "Edited message", "Update message")
 
-    mock_slack.edit_message.assert_called_once_with(
-        "test-channel",
-        "1234.5678",
-        "Edited message",
-    )
+    mock_slack.edit_message.assert_called_once()
+    edit_args, edit_kwargs = mock_slack.edit_message.call_args
+    assert edit_args == ("test-channel", "1234.5678", "Edited message")
+    # No owner → blocks should have section only, no context
+    assert edit_kwargs["blocks"][0]["type"] == "section"
+    assert len(edit_kwargs["blocks"]) == 1
 
     mock_slack.post_to_thread.assert_called_once_with(
         "test-channel",
         "1234.5678",
         "Update message",
     )
+
+
+@pytest.mark.asyncio
+async def test_update_thread_preserves_owner_in_blocks() -> None:
+    """Test that _update_thread includes claim context when job has an owner."""
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+        owner="U_ALICE",
+    )
+
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    await _update_thread(mock_slack, job, device, "Edited message", "Update message")
+
+    edit_kwargs = mock_slack.edit_message.call_args.kwargs
+    assert len(edit_kwargs["blocks"]) == 2
+    assert edit_kwargs["blocks"][1]["type"] == "context"
+    assert "Claimed by <@U_ALICE>" in str(edit_kwargs["blocks"][1])
 
 
 @pytest.mark.asyncio

@@ -91,6 +91,12 @@ class TestClaimHandler:
         assert any(
             "Claimed by <@U999>" in str(block) for block in update_kwargs["blocks"]
         )
+        # Verify in-thread @mention for notification
+        mock_client.chat_postMessage.assert_awaited_once()
+        post_kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert post_kwargs["channel"] == "C456"
+        assert post_kwargs["thread_ts"] == thread_ts
+        assert "<@U999>" in post_kwargs["text"]
 
     @pytest.mark.asyncio
     async def test_rejects_second_claimant(

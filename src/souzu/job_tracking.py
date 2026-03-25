@@ -4,6 +4,7 @@ from concurrent.futures import CancelledError
 from datetime import datetime, timedelta
 from enum import Enum
 from math import ceil
+from typing import Any
 
 from anyio import Path as AsyncPath
 from attrs import define
@@ -147,6 +148,26 @@ def _format_eta(eta: datetime) -> str:
             return _format_time(rounded_eta)
 
 
+def _build_status_blocks(text: str, owner: str | None) -> list[dict[str, Any]]:
+    """Build Block Kit blocks for a status message, preserving claim info."""
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": text},
+        },
+    ]
+    if owner is not None:
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"Claimed by <@{owner}>"},
+                ],
+            }
+        )
+    return blocks
+
+
 async def _update_thread(
     slack: SlackClient,
     job: PrintJob,
@@ -181,10 +202,12 @@ async def _update_thread(
             except SlackApiError as e:
                 logging.error(f"Failed to notify channel as fallback: {e}")
     try:
+        blocks = _build_status_blocks(edited_message, job.owner)
         await slack.edit_message(
             job.slack_channel or CONFIG.slack.print_notification_channel,
             job.slack_thread_ts,
             edited_message,
+            blocks=blocks,
         )
     except SlackApiError as e:
         logging.error(f"Failed to edit message: {e}")
