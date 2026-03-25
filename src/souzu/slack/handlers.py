@@ -87,16 +87,29 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
             client: Any,  # noqa: ANN401
         ) -> None:
             await ack()
+            logging.info(
+                f"Action handler invoked: {bound_action_id}, "
+                f"body keys: {list(body.keys())}"
+            )
 
             user_id: str = body["user"]["id"]
             message: dict[str, Any] = body.get("message", {})
             parent_ts: str | None = message.get("thread_ts")
 
+            logging.info(
+                f"Action lookup: parent_ts={parent_ts}, "
+                f"registry_keys={list(job_registry.keys())}"
+            )
+
             if parent_ts is None or parent_ts not in job_registry:
+                logging.warning(
+                    f"Action {bound_action_id}: no match for parent_ts={parent_ts}"
+                )
                 return
 
             state = job_registry[parent_ts]
             if state.current_job is None:
+                logging.warning(f"Action {bound_action_id}: no current job")
                 return
 
             job = state.current_job
