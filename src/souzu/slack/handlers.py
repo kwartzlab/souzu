@@ -51,6 +51,7 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 channel=body["channel"]["id"],
                 user=user_id,
                 text=f"This print was already claimed by <@{job.owner}>.",
+                thread_ts=thread_ts,
             )
             return
 
@@ -126,13 +127,11 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
 
             async def _ephemeral(text: str) -> None:
                 try:
-                    resp = await client.chat_postEphemeral(
+                    await client.chat_postEphemeral(
                         channel=body["channel"]["id"],
                         user=user_id,
                         text=text,
-                    )
-                    logging.info(
-                        f"chat_postEphemeral response: type={type(resp)}, value={resp}"
+                        thread_ts=parent_ts,
                     )
                 except Exception:
                     logging.exception("Failed to post ephemeral message")
