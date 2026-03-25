@@ -118,6 +118,9 @@ select = [
     "T201",   # print statements
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S106"]
+
 [dependency-groups]
 dev = [
     "coverage>=7.4.3,<8.0.0",
