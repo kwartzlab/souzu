@@ -115,9 +115,16 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
             try:
                 action = JobAction(action_value)
             except ValueError:
+                logging.warning(f"Action {bound_action_id}: invalid action value")
                 return
 
-            if action not in available_actions(job):
+            actions = available_actions(job)
+            logging.info(
+                f"Action {bound_action_id}: job.state={job.state}, "
+                f"available={actions}, owner={job.owner}, user={user_id}"
+            )
+
+            if action not in actions:
                 await client.chat_postEphemeral(
                     channel=body["channel"]["id"],
                     user=user_id,
@@ -133,6 +140,7 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 )
                 return
 
+            logging.info(f"Action {bound_action_id}: sending stub response")
             await client.chat_postEphemeral(
                 channel=body["channel"]["id"],
                 user=user_id,
