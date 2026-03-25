@@ -147,7 +147,7 @@ def test_config() -> None:
     assert str(config.timezone) == "UTC"
 
     printer_config = PrinterConfig(access_code="test_code")
-    slack_config = SlackConfig(access_token="test_token")  # noqa: S106 - Test token, not real
+    slack_config = SlackConfig(access_token="test_token")
     timezone = ZoneInfo("America/New_York")
 
     config = Config(
@@ -174,7 +174,7 @@ def test_config_serialization_round_trip() -> None:
     )
 
     original_slack_config = SlackConfig(
-        access_token="xoxb-test",  # noqa: S106 - Test token, not real
+        access_token="xoxb-test",
         print_notification_channel="prints",
         error_notification_channel="errors",
     )
@@ -263,7 +263,7 @@ def test_config_file_persistence() -> None:
     )
 
     slack_config = SlackConfig(
-        access_token="xoxb-testtoken",  # noqa: S106 - Test token, not real
+        access_token="xoxb-testtoken",
         print_notification_channel="test-prints",
         error_notification_channel="test-errors",
     )
