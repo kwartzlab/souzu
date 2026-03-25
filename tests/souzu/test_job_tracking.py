@@ -24,6 +24,7 @@ from souzu.job_tracking import (
     _update_thread,
     available_actions,
     build_actions_blocks,
+    build_terminal_actions_blocks,
     monitor_printer_status,
 )
 from souzu.slack.client import SlackApiError, SlackClient
@@ -672,8 +673,6 @@ def test_build_actions_blocks_empty() -> None:
 
 
 def test_build_terminal_actions_blocks() -> None:
-    from souzu.job_tracking import build_terminal_actions_blocks
-
     blocks = build_terminal_actions_blocks("print completed")
     assert len(blocks) == 1
     assert blocks[0]["type"] == "context"
