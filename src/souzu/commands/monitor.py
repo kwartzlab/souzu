@@ -20,13 +20,13 @@ from types import FrameType
 from souzu.bambu.discovery import BambuDevice, discover_bambu_devices
 from souzu.bambu.mqtt import BambuMqttConnection
 from souzu.config import CONFIG
-from souzu.job_tracking import monitor_printer_status
+from souzu.job_tracking import JobRegistry, monitor_printer_status
 from souzu.logs import log_reports
-from souzu.slack.monitor import SlackMessage, watch_thread
-from souzu.slack.thread import post_to_channel, post_to_thread
+from souzu.slack.client import SlackClient
+from souzu.slack.handlers import register_job_handlers
 
 
-async def notify_startup() -> str | None:
+async def notify_startup(slack: SlackClient) -> str | None:
     """Post a startup notification to Slack. Returns message ts, or None on failure."""
     try:
         souzu_version = version("souzu")
@@ -34,7 +34,7 @@ async def notify_startup() -> str | None:
         souzu_version = "unknown"
 
     try:
-        return await post_to_channel(
+        return await slack.post_to_channel(
             CONFIG.slack.error_notification_channel,
             f"Souzu {souzu_version} started",
         )
@@ -43,7 +43,7 @@ async def notify_startup() -> str | None:
         return None
 
 
-async def inner_loop() -> None:
+async def inner_loop(slack: SlackClient, job_registry: JobRegistry) -> None:
     queue = Queue[BambuDevice]()
     async with TaskGroup() as tg, AsyncExitStack() as stack:
         tg.create_task(discover_bambu_devices(queue, max_time=timedelta(minutes=1)))
@@ -55,7 +55,9 @@ async def inner_loop() -> None:
                     BambuMqttConnection(tg, device)
                 )
                 tg.create_task(log_reports(device, connection))
-                tg.create_task(monitor_printer_status(device, connection))
+                tg.create_task(
+                    monitor_printer_status(device, connection, slack, job_registry)
+                )
             except Exception:
                 logging.exception(
                     f"Failed to set up subscription for {device.device_name}"
@@ -64,47 +66,38 @@ async def inner_loop() -> None:
 
 
 async def monitor() -> None:
-    startup_ts = await notify_startup()
+    job_registry: JobRegistry = {}
 
-    loop = get_running_loop()
-    exit_event = Event()
+    async with SlackClient(
+        access_token=CONFIG.slack.access_token,
+        app_token=CONFIG.slack.app_token,
+    ) as slack:
+        if slack.app:
+            register_job_handlers(slack, job_registry)
 
-    def exit_handler(sig: int, frame: FrameType | None) -> None:
-        exit_event.set()
+        await notify_startup(slack)
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, exit_handler, sig, None)
+        loop = get_running_loop()
+        exit_event = Event()
 
-    tasks: list[Task[object]] = [
-        create_task(inner_loop()),
-        create_task(exit_event.wait()),
-    ]
-    if startup_ts and CONFIG.slack.error_notification_channel:
+        def exit_handler(sig: int, frame: FrameType | None) -> None:
+            exit_event.set()
 
-        async def on_startup_reply(msg: SlackMessage) -> None:
-            await post_to_thread(
-                CONFIG.slack.error_notification_channel,
-                startup_ts,
-                f"I saw this message: {msg.text}",
-            )
-
-        tasks.append(
-            create_task(
-                watch_thread(
-                    CONFIG.slack.error_notification_channel,
-                    startup_ts,
-                    on_startup_reply,
-                )
-            )
-        )
-
-    try:
-        done, pending = await wait(tasks, return_when=FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        await wait(pending, return_when=ALL_COMPLETED)
-    except CancelledError:
-        pass
-    finally:
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(sig)
+            loop.add_signal_handler(sig, exit_handler, sig, None)
+
+        tasks: list[Task[object]] = [
+            create_task(inner_loop(slack, job_registry)),
+            create_task(exit_event.wait()),
+        ]
+
+        try:
+            done, pending = await wait(tasks, return_when=FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await wait(pending, return_when=ALL_COMPLETED)
+        except CancelledError:
+            pass
+        finally:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
