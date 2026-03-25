@@ -81,6 +81,34 @@ class SlackClient:
         """The bot's Slack user ID, cached after start()."""
         return self._bot_user_id
 
+    async def _api_call(
+        self,
+        method: str,
+        channel: str | None,
+        error_context: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Call a Slack API method with common error handling.
+
+        Returns the API response dict, or None if no client or channel.
+        """
+        if self._web_client is None:
+            return None
+        if channel is None:
+            logging.debug(f"No channel for {error_context}: {params}")
+            return None
+        params["channel"] = channel
+        try:
+            api_method = getattr(self._web_client, method)
+            response = await api_method(**params)
+        except Exception as e:
+            raise SlackApiError(f"Failed to {error_context}: {e}") from e
+        if not response.get("ok"):
+            raise SlackApiError(
+                f"Failed to {error_context}: {response.get('error', 'Unknown error')}"
+            )
+        return response
+
     async def post_to_channel(
         self,
         channel: str | None,
@@ -88,23 +116,13 @@ class SlackClient:
         blocks: list[Any] | None = None,
     ) -> str | None:
         """Post a message to a channel. Returns the message timestamp."""
-        if self._web_client is None:
-            return None
-        if channel is None:
-            logging.debug(f"No channel to post message: {text}")
-            return None
-        try:
-            kwargs: dict[str, Any] = {"channel": channel, "text": text}
-            if blocks is not None:
-                kwargs["blocks"] = blocks
-            response = await self._web_client.chat_postMessage(**kwargs)
-        except Exception as e:
-            raise SlackApiError(f"Failed to post message to channel: {e}") from e
-        if not response.get("ok"):
-            raise SlackApiError(
-                f"Failed to post message to channel: {response.get('error', 'Unknown error')}"
-            )
-        return response.get("ts")
+        params: dict[str, Any] = {"text": text}
+        if blocks is not None:
+            params["blocks"] = blocks
+        response = await self._api_call(
+            "chat_postMessage", channel, "post message to channel", params
+        )
+        return response.get("ts") if response else None
 
     async def post_to_thread(
         self,
@@ -114,27 +132,13 @@ class SlackClient:
         blocks: list[Any] | None = None,
     ) -> str | None:
         """Post a message to a thread. Returns the message timestamp."""
-        if self._web_client is None:
-            return None
-        if channel is None:
-            logging.debug(f"No channel to post message: {text}")
-            return None
-        try:
-            kwargs: dict[str, Any] = {
-                "channel": channel,
-                "thread_ts": thread_ts,
-                "text": text,
-            }
-            if blocks is not None:
-                kwargs["blocks"] = blocks
-            response = await self._web_client.chat_postMessage(**kwargs)
-        except Exception as e:
-            raise SlackApiError(f"Failed to post message to thread: {e}") from e
-        if not response.get("ok"):
-            raise SlackApiError(
-                f"Failed to post message to thread: {response.get('error', 'Unknown error')}"
-            )
-        return response.get("ts")
+        params: dict[str, Any] = {"thread_ts": thread_ts, "text": text}
+        if blocks is not None:
+            params["blocks"] = blocks
+        response = await self._api_call(
+            "chat_postMessage", channel, "post message to thread", params
+        )
+        return response.get("ts") if response else None
 
     async def edit_message(
         self,
@@ -144,23 +148,7 @@ class SlackClient:
         blocks: list[Any] | None = None,
     ) -> None:
         """Edit an existing message."""
-        if self._web_client is None:
-            return
-        if channel is None:
-            logging.debug(f"No channel to edit message: {message_ts}")
-            return
-        try:
-            kwargs: dict[str, Any] = {
-                "channel": channel,
-                "ts": message_ts,
-                "text": text,
-            }
-            if blocks is not None:
-                kwargs["blocks"] = blocks
-            response = await self._web_client.chat_update(**kwargs)
-        except Exception as e:
-            raise SlackApiError(f"Failed to edit message: {e}") from e
-        if not response.get("ok"):
-            raise SlackApiError(
-                f"Failed to edit message: {response.get('error', 'Unknown error')}"
-            )
+        params: dict[str, Any] = {"ts": message_ts, "text": text}
+        if blocks is not None:
+            params["blocks"] = blocks
+        await self._api_call("chat_update", channel, "edit message", params)

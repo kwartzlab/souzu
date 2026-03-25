@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
+from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+from slack_bolt.async_app import AsyncApp
+from slack_sdk.web.async_client import AsyncWebClient
 
 from souzu.slack.client import SlackApiError, SlackClient
 
@@ -51,7 +54,7 @@ class TestAccessTokenOnlyMode:
         mock_cls = mocker.patch(
             "slack_sdk.web.async_client.AsyncWebClient",
         )
-        mock_instance = MagicMock()
+        mock_instance = MagicMock(spec=AsyncWebClient)
         mock_instance.auth_test = AsyncMock(return_value={"user_id": "U_BOT"})
         mock_instance.chat_postMessage = AsyncMock(
             return_value={"ok": True, "ts": "1234.5678"}
@@ -112,7 +115,7 @@ class TestAccessTokenOnlyMode:
             with caplog.at_level(logging.DEBUG):
                 result = await client.post_to_channel(None, "hello")
         assert result is None
-        assert "No channel to post message" in caplog.text
+        assert "No channel for post message to channel" in caplog.text
         mock_web_client.chat_postMessage.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -161,8 +164,8 @@ class TestFullMode:
     @pytest.fixture
     def mock_app(self, mocker: MockerFixture) -> MagicMock:
         mock_app_cls = mocker.patch("slack_bolt.async_app.AsyncApp")
-        mock_app_instance = MagicMock()
-        mock_app_instance.client = MagicMock()
+        mock_app_instance = MagicMock(spec=AsyncApp)
+        mock_app_instance.client = MagicMock(spec=AsyncWebClient)
         mock_app_instance.client.auth_test = AsyncMock(
             return_value={"user_id": "U_BOT"}
         )
@@ -174,7 +177,7 @@ class TestFullMode:
         mock_handler_cls = mocker.patch(
             "slack_bolt.adapter.socket_mode.async_handler.AsyncSocketModeHandler"
         )
-        mock_handler_instance = MagicMock()
+        mock_handler_instance = MagicMock(spec=AsyncSocketModeHandler)
         mock_handler_instance.connect_async = AsyncMock()
         mock_handler_instance.disconnect_async = AsyncMock()
         mock_handler_cls.return_value = mock_handler_instance
