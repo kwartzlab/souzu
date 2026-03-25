@@ -78,16 +78,13 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
             text=f"<@{user_id}> claimed this print.",
         )
 
-    action_ids = [f"print_{action.value}" for action in JobAction]
-
-    for action_id in action_ids:
-
-        @slack.app.action(action_id)
+    def _make_action_handler(
+        bound_action_id: str,
+    ) -> Any:  # noqa: ANN401
         async def handle_action(
             ack: Any,  # noqa: ANN401
             body: Any,  # noqa: ANN401
             client: Any,  # noqa: ANN401
-            _action_id: str = action_id,
         ) -> None:
             await ack()
 
@@ -104,7 +101,7 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
 
             job = state.current_job
 
-            action_value = _action_id.removeprefix("print_")
+            action_value = bound_action_id.removeprefix("print_")
             try:
                 action = JobAction(action_value)
             except ValueError:
@@ -131,3 +128,8 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 user=user_id,
                 text="Sorry, this isn't implemented yet, but stay tuned!",
             )
+
+        return handle_action
+
+    for action_id in [f"print_{action.value}" for action in JobAction]:
+        slack.app.action(action_id)(_make_action_handler(action_id))
