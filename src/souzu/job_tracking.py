@@ -14,12 +14,7 @@ from souzu.bambu.discovery import BambuDevice
 from souzu.bambu.errors import CANCELLED_ERROR_CODES, parse_error_code
 from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
 from souzu.config import CONFIG
-from souzu.slack.thread import (
-    SlackApiError,
-    edit_message,
-    post_to_channel,
-    post_to_thread,
-)
+from souzu.slack.client import SlackApiError, SlackClient
 
 _ONE_MINUTE = timedelta(minutes=1)
 _FIVE_MINUTES = timedelta(minutes=5)
@@ -46,6 +41,10 @@ _STATE_SERIALIZER.register_structure_hook(
 )
 
 
+# Type alias for the job registry — maps Slack thread_ts to PrinterState
+JobRegistry = dict[str, "PrinterState"]
+
+
 class JobState(Enum):
     RUNNING = 'running'
     PAUSED = 'paused'
@@ -65,6 +64,7 @@ class PrintJob:
     slack_channel: str | None = None
     slack_thread_ts: str | None = None
     start_message: str | None = None
+    owner: str | None = None
 
 
 @define
@@ -148,11 +148,15 @@ def _format_eta(eta: datetime) -> str:
 
 
 async def _update_thread(
-    job: PrintJob, device: BambuDevice, edited_message: str, update_message: str
+    slack: SlackClient,
+    job: PrintJob,
+    device: BambuDevice,
+    edited_message: str,
+    update_message: str,
 ) -> None:
     if job.slack_thread_ts is None:
         try:
-            await post_to_channel(
+            await slack.post_to_channel(
                 job.slack_channel or CONFIG.slack.print_notification_channel,
                 update_message,
             )
@@ -161,7 +165,7 @@ async def _update_thread(
         return
 
     try:
-        await post_to_thread(
+        await slack.post_to_thread(
             job.slack_channel or CONFIG.slack.print_notification_channel,
             job.slack_thread_ts,
             update_message,
@@ -169,16 +173,15 @@ async def _update_thread(
     except SlackApiError as e:
         logging.error(f"Failed to notify thread: {e}")
         if job.slack_thread_ts:
-            # we tried to post to thread, we can try posting to the channel instead
             try:
-                await post_to_channel(
+                await slack.post_to_channel(
                     job.slack_channel or CONFIG.slack.print_notification_channel,
                     update_message,
                 )
             except SlackApiError as e:
                 logging.error(f"Failed to notify channel as fallback: {e}")
     try:
-        await edit_message(
+        await slack.edit_message(
             job.slack_channel or CONFIG.slack.print_notification_channel,
             job.slack_thread_ts,
             edited_message,
@@ -188,6 +191,7 @@ async def _update_thread(
 
 
 async def _update_job(
+    slack: SlackClient,
     job: PrintJob,
     device: BambuDevice,
     emoji: str,
@@ -199,6 +203,7 @@ async def _update_job(
         f"~{job.start_message}~\n{emoji} " if job.start_message else update_prefix
     )
     await _update_thread(
+        slack,
         job,
         device,
         f"{edit_prefix}{short_message}",
@@ -207,7 +212,11 @@ async def _update_job(
 
 
 async def _job_started(
-    report: BambuStatusReport, state: PrinterState, device: BambuDevice
+    slack: SlackClient,
+    report: BambuStatusReport,
+    state: PrinterState,
+    device: BambuDevice,
+    job_registry: JobRegistry,
 ) -> None:
     assert report.mc_remaining_time is not None
     duration = timedelta(minutes=report.mc_remaining_time)
@@ -219,24 +228,51 @@ async def _job_started(
         state=JobState.RUNNING,
         start_message=start_message,
     )
+    claim_blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":progress_bar: {start_message}",
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Claim"},
+                    "action_id": "claim_print",
+                    "style": "primary",
+                },
+            ],
+        },
+    ]
     try:
-        thread_ts = await post_to_channel(
+        thread_ts = await slack.post_to_channel(
             CONFIG.slack.print_notification_channel,
             f":progress_bar: {job.start_message}",
+            blocks=claim_blocks,
         )
         job.slack_channel = CONFIG.slack.print_notification_channel
         job.slack_thread_ts = thread_ts
     except SlackApiError as e:
         logging.error(f"Failed to notify channel: {e}")
     state.current_job = job
+    if job.slack_thread_ts is not None:
+        job_registry[job.slack_thread_ts] = state
 
 
 async def _job_paused(
-    report: BambuStatusReport, state: PrinterState, device: BambuDevice
+    slack: SlackClient,
+    report: BambuStatusReport,
+    state: PrinterState,
+    device: BambuDevice,
 ) -> None:
     assert state.current_job is not None
     error_message = parse_error_code(report.print_error) if report.print_error else None
     await _update_job(
+        slack,
         state.current_job,
         device,
         ":warning:",
@@ -250,12 +286,16 @@ async def _job_paused(
 
 
 async def _job_resumed(
-    report: BambuStatusReport, state: PrinterState, device: BambuDevice
+    slack: SlackClient,
+    report: BambuStatusReport,
+    state: PrinterState,
+    device: BambuDevice,
 ) -> None:
     assert state.current_job is not None and report.mc_remaining_time is not None
     remaining_duration = timedelta(minutes=report.mc_remaining_time)
     eta = datetime.now(tz=CONFIG.timezone) + remaining_duration
     await _update_job(
+        slack,
         state.current_job,
         device,
         ":progress_bar:",
@@ -267,11 +307,15 @@ async def _job_resumed(
 
 
 async def _job_failed(
-    report: BambuStatusReport, state: PrinterState, device: BambuDevice
+    slack: SlackClient,
+    report: BambuStatusReport,
+    state: PrinterState,
+    device: BambuDevice,
 ) -> None:
     assert state.current_job is not None
     if report.print_error in CANCELLED_ERROR_CODES:
         await _update_job(
+            slack,
             state.current_job,
             device,
             ":heavy_minus_sign:",
@@ -282,6 +326,7 @@ async def _job_failed(
     else:
         error_message = parse_error_code(report.print_error)
         await _update_job(
+            slack,
             state.current_job,
             device,
             ":x:",
@@ -292,10 +337,14 @@ async def _job_failed(
 
 
 async def _job_completed(
-    report: BambuStatusReport, state: PrinterState, device: BambuDevice
+    slack: SlackClient,
+    report: BambuStatusReport,
+    state: PrinterState,
+    device: BambuDevice,
 ) -> None:
     assert state.current_job is not None
     await _update_job(
+        slack,
         state.current_job,
         device,
         ":white_check_mark:",
@@ -306,10 +355,14 @@ async def _job_completed(
 
 
 async def _job_tracking_lost(
-    report: BambuStatusReport, state: PrinterState, device: BambuDevice
+    slack: SlackClient,
+    report: BambuStatusReport,
+    state: PrinterState,
+    device: BambuDevice,
 ) -> None:
     assert state.current_job is not None
     await _update_job(
+        slack,
         state.current_job,
         device,
         ":question:",
@@ -320,7 +373,10 @@ async def _job_tracking_lost(
 
 
 async def monitor_printer_status(
-    device: BambuDevice, connection: BambuMqttConnection
+    device: BambuDevice,
+    connection: BambuMqttConnection,
+    slack: SlackClient,
+    job_registry: JobRegistry,
 ) -> None:
     """
     Subscribe to events from the given printer and report on print status.
@@ -350,17 +406,19 @@ async def monitor_printer_status(
                             # wait until we get the remaining time
                             pass
                         case (None, 'RUNNING', _):
-                            await _job_started(report, state, device)
+                            await _job_started(
+                                slack, report, state, device, job_registry
+                            )
                         case (PrintJob(state=JobState.RUNNING), 'PAUSE', _):
-                            await _job_paused(report, state, device)
+                            await _job_paused(slack, report, state, device)
                         case (PrintJob(state=JobState.PAUSED), 'RUNNING', _):
-                            await _job_resumed(report, state, device)
+                            await _job_resumed(slack, report, state, device)
                         case (PrintJob(), 'FINISH', _):
-                            await _job_completed(report, state, device)
+                            await _job_completed(slack, report, state, device)
                         case (PrintJob(), 'FAILED', _):
-                            await _job_failed(report, state, device)
+                            await _job_failed(slack, report, state, device)
                         case (PrintJob(), 'IDLE', _):
-                            await _job_tracking_lost(report, state, device)
+                            await _job_tracking_lost(slack, report, state, device)
         finally:
             serialized = json.dumps(_STATE_SERIALIZER.unstructure(state))
             async with await state_file.open('w') as f:
