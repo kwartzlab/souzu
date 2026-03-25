@@ -167,6 +167,47 @@ def _format_eta(eta: datetime) -> str:
             return _format_time(rounded_eta)
 
 
+_ACTION_LABELS: dict[JobAction, str] = {
+    JobAction.PAUSE: "Pause",
+    JobAction.RESUME: "Resume",
+    JobAction.CANCEL: "Cancel",
+    JobAction.PHOTO: "Photo",
+}
+
+_ACTION_STYLES: dict[JobAction, str] = {
+    JobAction.CANCEL: "danger",
+}
+
+
+def build_actions_blocks(actions: list[JobAction]) -> list[dict[str, Any]]:
+    """Build Block Kit blocks for the actions message."""
+    if not actions:
+        return []
+    elements: list[dict[str, Any]] = []
+    for action in actions:
+        btn: dict[str, Any] = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": _ACTION_LABELS[action]},
+            "action_id": f"print_{action.value}",
+        }
+        if action in _ACTION_STYLES:
+            btn["style"] = _ACTION_STYLES[action]
+        elements.append(btn)
+    return [{"type": "actions", "elements": elements}]
+
+
+def build_terminal_actions_blocks(reason: str) -> list[dict[str, Any]]:
+    """Build Block Kit blocks for a terminal actions message (no buttons)."""
+    return [
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"No actions available — {reason}."},
+            ],
+        }
+    ]
+
+
 def _build_status_blocks(text: str, owner: str | None) -> list[dict[str, Any]]:
     """Build Block Kit blocks for a status message, preserving claim info."""
     blocks: list[dict[str, Any]] = [

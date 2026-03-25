@@ -23,6 +23,7 @@ from souzu.job_tracking import (
     _round_up,
     _update_thread,
     available_actions,
+    build_actions_blocks,
     monitor_printer_status,
 )
 from souzu.slack.client import SlackApiError, SlackClient
@@ -631,3 +632,49 @@ def test_available_actions_none() -> None:
 def test_print_job_actions_ts_default() -> None:
     job = PrintJob(duration=timedelta(hours=1))
     assert job.actions_ts is None
+
+
+def test_build_actions_blocks_running() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
+    blocks = build_actions_blocks(available_actions(job))
+    assert len(blocks) == 1
+    assert blocks[0]["type"] == "actions"
+    action_ids = [e["action_id"] for e in blocks[0]["elements"]]
+    assert action_ids == ["print_pause", "print_cancel", "print_photo"]
+
+
+def test_build_actions_blocks_paused() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED)
+    blocks = build_actions_blocks(available_actions(job))
+    action_ids = [e["action_id"] for e in blocks[0]["elements"]]
+    assert action_ids == ["print_resume", "print_cancel", "print_photo"]
+
+
+def test_build_actions_blocks_cancel_is_danger() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
+    blocks = build_actions_blocks(available_actions(job))
+    cancel_btn = [e for e in blocks[0]["elements"] if e["action_id"] == "print_cancel"][
+        0
+    ]
+    assert cancel_btn["style"] == "danger"
+
+
+def test_build_actions_blocks_pause_has_no_style() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
+    blocks = build_actions_blocks(available_actions(job))
+    pause_btn = [e for e in blocks[0]["elements"] if e["action_id"] == "print_pause"][0]
+    assert "style" not in pause_btn
+
+
+def test_build_actions_blocks_empty() -> None:
+    blocks = build_actions_blocks([])
+    assert blocks == []
+
+
+def test_build_terminal_actions_blocks() -> None:
+    from souzu.job_tracking import build_terminal_actions_blocks
+
+    blocks = build_terminal_actions_blocks("print completed")
+    assert len(blocks) == 1
+    assert blocks[0]["type"] == "context"
+    assert "print completed" in blocks[0]["elements"][0]["text"]
