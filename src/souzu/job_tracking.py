@@ -550,6 +550,10 @@ async def monitor_printer_status(
                     and state.current_job.slack_thread_ts is not None
                 ):
                     job_registry[state.current_job.slack_thread_ts] = state
+                    logging.info(
+                        f"Registered persisted job in registry: "
+                        f"thread_ts={state.current_job.slack_thread_ts}"
+                    )
         else:
             state = PrinterState()
 
