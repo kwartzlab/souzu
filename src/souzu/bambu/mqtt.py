@@ -229,6 +229,7 @@ class BambuMqttConnection(AbstractAsyncContextManager):
         self._client: Client | None = None
         self._consume_task: Task | None = None
 
+        self._sequence_id: int = 0
         self._cache = _Cache()
 
         self._queues = list[Queue[BambuStatusReport]]()
@@ -297,26 +298,56 @@ class BambuMqttConnection(AbstractAsyncContextManager):
 
             try:
                 async with client:
-                    await client.subscribe(f"device/{self.device.device_id}/report")
-                    async for message in client.messages:
-                        wrapper = self._parse_payload(message.payload)
-                        if wrapper is not None:
-                            self._cache = _Cache(
-                                print=wrapper.print,
-                                last_update=datetime.now(UTC),
-                                last_full_update=self._cache.last_full_update,
-                            )
-                            for queue in self._queues:
-                                try:
-                                    queue.put_nowait(wrapper.print)
-                                except QueueFull:
-                                    logging.warning(
-                                        "Dropping message due to full queue"
-                                    )
+                    try:
+                        self._client = client
+                        await client.subscribe(f"device/{self.device.device_id}/report")
+                        async for message in client.messages:
+                            wrapper = self._parse_payload(message.payload)
+                            if wrapper is not None:
+                                self._cache = _Cache(
+                                    print=wrapper.print,
+                                    last_update=datetime.now(UTC),
+                                    last_full_update=self._cache.last_full_update,
+                                )
+                                for queue in self._queues:
+                                    try:
+                                        queue.put_nowait(wrapper.print)
+                                    except QueueFull:
+                                        logging.warning(
+                                            "Dropping message due to full queue"
+                                        )
+                    finally:
+                        self._client = None
             except MqttError as e:
                 logging.exception(f"MQTT error: {e}")
                 await sleep(MQTT_ERROR_RECONNECT_DELAY)
                 # TODO how to handle rediscovery at new IP?
+
+    async def send_command(self, command_type: str, payload: dict[str, str]) -> None:
+        """Publish a command to the printer via MQTT."""
+        if self._client is None:
+            raise RuntimeError("Not connected to printer")
+        topic = f"device/{self.device.device_id}/request"
+        message = {
+            command_type: {
+                "sequence_id": str(self._sequence_id),
+                **payload,
+            }
+        }
+        await self._client.publish(topic, json.dumps(message))
+        self._sequence_id += 1
+
+    async def pause(self) -> None:
+        """Send a pause command to the printer."""
+        await self.send_command("print", {"command": "pause"})
+
+    async def resume(self) -> None:
+        """Send a resume command to the printer."""
+        await self.send_command("print", {"command": "resume"})
+
+    async def stop(self) -> None:
+        """Send a stop command to the printer."""
+        await self.send_command("print", {"command": "stop"})
 
     def _parse_payload(self, payload: PayloadType) -> _BambuWrapper | None:
         try:
