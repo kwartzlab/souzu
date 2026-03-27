@@ -824,6 +824,33 @@ def test_build_terminal_actions_blocks() -> None:
     assert "print completed" in blocks[0]["elements"][0]["text"]
 
 
+def test_printer_state_connection_default() -> None:
+    """Test that PrinterState.connection defaults to None."""
+    state = PrinterState()
+    assert state.connection is None
+
+
+def test_printer_state_connection_excluded_from_serialization() -> None:
+    """Test that connection is excluded from serialization round-trip."""
+    import json
+    from unittest.mock import MagicMock
+
+    from souzu.bambu.mqtt import BambuMqttConnection
+    from souzu.job_tracking import _STATE_SERIALIZER
+
+    mock_conn = MagicMock(spec=BambuMqttConnection)
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
+    state = PrinterState(current_job=job, connection=mock_conn)
+
+    unstructured = _STATE_SERIALIZER.unstructure(state)
+    assert "connection" not in unstructured
+
+    json_str = json.dumps(unstructured)
+    json_loaded = json.loads(json_str)
+    restored = _STATE_SERIALIZER.structure(json_loaded, PrinterState)
+    assert restored.connection is None
+
+
 @pytest.mark.asyncio
 async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
     """Test that _job_started posts an actions message after the parent message."""

@@ -9,6 +9,8 @@ from typing import Any
 from anyio import Path as AsyncPath
 from attrs import define
 from cattrs import Converter
+from cattrs.gen import make_dict_unstructure_fn
+from cattrs.gen import override as cattrs_override
 from xdg_base_dirs import xdg_state_home
 
 from souzu.bambu.discovery import BambuDevice
@@ -90,6 +92,17 @@ def available_actions(job: PrintJob | None) -> list[JobAction]:
 @define
 class PrinterState:
     current_job: PrintJob | None = None
+    connection: BambuMqttConnection | None = None
+
+
+_STATE_SERIALIZER.register_unstructure_hook(
+    PrinterState,
+    make_dict_unstructure_fn(
+        PrinterState,
+        _STATE_SERIALIZER,
+        connection=cattrs_override(omit=True),
+    ),
+)
 
 
 def _round_up(time: datetime, unit: timedelta) -> datetime:
