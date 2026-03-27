@@ -192,25 +192,34 @@ _ACTION_STYLES: dict[JobAction, str] = {
 }
 
 
-def build_actions_blocks(actions: list[JobAction]) -> list[dict[str, Any]]:
-    """Build Block Kit blocks for the actions message.
+_CANCEL_CONFIRM = {
+    "title": {"type": "plain_text", "text": "Cancel print?"},
+    "text": {
+        "type": "plain_text",
+        "text": "This will stop the print and cannot be undone.",
+    },
+    "confirm": {"type": "plain_text", "text": "Cancel print"},
+    "deny": {"type": "plain_text", "text": "Keep printing"},
+}
 
-    TODO: Replace stub with actual action buttons once handlers are implemented.
-    """
+
+def build_actions_blocks(actions: list[JobAction]) -> list[dict[str, Any]]:
+    """Build Block Kit blocks for the actions message."""
     if not actions:
         return []
-    return [
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": "Actions coming soon: "
-                    + ", ".join(_ACTION_LABELS[a] for a in actions),
-                },
-            ],
+    elements: list[dict[str, Any]] = []
+    for action in actions:
+        button: dict[str, Any] = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": _ACTION_LABELS[action]},
+            "action_id": f"print_{action.value}",
         }
-    ]
+        if action in _ACTION_STYLES:
+            button["style"] = _ACTION_STYLES[action]
+        if action == JobAction.CANCEL:
+            button["confirm"] = _CANCEL_CONFIRM
+        elements.append(button)
+    return [{"type": "actions", "elements": elements}]
 
 
 def build_terminal_actions_blocks(reason: str) -> list[dict[str, Any]]:

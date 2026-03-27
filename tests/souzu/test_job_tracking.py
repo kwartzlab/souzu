@@ -794,27 +794,47 @@ def test_print_job_actions_ts_default() -> None:
 
 
 def test_build_actions_blocks_running() -> None:
-    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
-    blocks = build_actions_blocks(available_actions(job))
+    """Running job gets Pause, Cancel (with confirm), and Photo buttons."""
+    actions = [JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO]
+    blocks = build_actions_blocks(actions)
     assert len(blocks) == 1
-    assert blocks[0]["type"] == "context"
-    text = blocks[0]["elements"][0]["text"]
-    assert "Pause" in text
-    assert "Cancel" in text
-    assert "Photo" in text
+    assert blocks[0]["type"] == "actions"
+    elements = blocks[0]["elements"]
+    assert len(elements) == 3
+    assert elements[0]["action_id"] == "print_pause"
+    assert elements[0]["text"]["text"] == "Pause"
+    assert "style" not in elements[0]
+    assert elements[1]["action_id"] == "print_cancel"
+    assert elements[1]["style"] == "danger"
+    assert "confirm" in elements[1]
+    assert elements[2]["action_id"] == "print_photo"
 
 
 def test_build_actions_blocks_paused() -> None:
-    job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED)
-    blocks = build_actions_blocks(available_actions(job))
-    text = blocks[0]["elements"][0]["text"]
-    assert "Resume" in text
-    assert "Cancel" in text
+    """Paused job gets Resume, Cancel (with confirm), and Photo buttons."""
+    actions = [JobAction.RESUME, JobAction.CANCEL, JobAction.PHOTO]
+    blocks = build_actions_blocks(actions)
+    elements = blocks[0]["elements"]
+    assert elements[0]["action_id"] == "print_resume"
+    assert elements[1]["action_id"] == "print_cancel"
+    assert "confirm" in elements[1]
 
 
 def test_build_actions_blocks_empty() -> None:
     blocks = build_actions_blocks([])
     assert blocks == []
+
+
+def test_build_actions_blocks_cancel_confirm_dialog() -> None:
+    """Cancel button has a confirmation dialog with expected text."""
+    actions = [JobAction.CANCEL]
+    blocks = build_actions_blocks(actions)
+    cancel_btn = blocks[0]["elements"][0]
+    confirm = cancel_btn["confirm"]
+    assert confirm["title"]["text"] == "Cancel print?"
+    assert "cannot be undone" in confirm["text"]["text"]
+    assert confirm["confirm"]["text"] == "Cancel print"
+    assert confirm["deny"]["text"] == "Keep printing"
 
 
 def test_build_terminal_actions_blocks() -> None:
@@ -883,4 +903,4 @@ async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
     mock_slack.post_to_thread.assert_called_once()
     call_kwargs = mock_slack.post_to_thread.call_args.kwargs
     assert "blocks" in call_kwargs
-    assert "Pause" in call_kwargs["blocks"][0]["elements"][0]["text"]
+    assert call_kwargs["blocks"][0]["type"] == "actions"
