@@ -323,7 +323,7 @@ class BambuMqttConnection(AbstractAsyncContextManager):
                 await sleep(MQTT_ERROR_RECONNECT_DELAY)
                 # TODO how to handle rediscovery at new IP?
 
-    async def send_command(self, command_type: str, payload: dict[str, str]) -> None:
+    async def send_command(self, command_type: str, payload: dict[str, Any]) -> None:
         """Publish a command to the printer via MQTT."""
         if self._client is None:
             raise RuntimeError("Not connected to printer")
