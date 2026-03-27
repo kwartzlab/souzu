@@ -579,6 +579,8 @@ async def monitor_printer_status(
         else:
             state = PrinterState()
 
+        state.connection = connection
+
         try:
             async with connection.subscribe() as reports:
                 async for report in reports:
