@@ -3,6 +3,8 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
+from aiomqtt import MqttError
+
 from souzu.job_tracking import (
     JobAction,
     JobRegistry,
@@ -10,6 +12,18 @@ from souzu.job_tracking import (
     PrintJob,
     available_actions,
 )
+
+_ACTION_COMMANDS: dict[JobAction, str] = {
+    JobAction.PAUSE: "pause",
+    JobAction.RESUME: "resume",
+    JobAction.CANCEL: "stop",
+}
+
+_ACTION_NAMES: dict[JobAction, str] = {
+    JobAction.PAUSE: "Pause",
+    JobAction.RESUME: "Resume",
+    JobAction.CANCEL: "Cancel",
+}
 
 if TYPE_CHECKING:
     from souzu.slack.client import SlackClient
@@ -127,7 +141,44 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 await _ephemeral("Sorry, this isn't your print.")
                 return
 
-            await _ephemeral("Sorry, this isn't implemented yet, but stay tuned!")
+            # Photo remains a stub
+            if action == JobAction.PHOTO:
+                await _ephemeral("Sorry, this isn't implemented yet, but stay tuned!")
+                return
+
+            # Dispatch MQTT command
+            if state.connection is None:
+                await _ephemeral("Printer is offline.")
+                return
+
+            command_method = {
+                JobAction.PAUSE: state.connection.pause,
+                JobAction.RESUME: state.connection.resume,
+                JobAction.CANCEL: state.connection.stop,
+            }.get(action)
+
+            if command_method is None:
+                return
+
+            try:
+                await command_method()
+            except (RuntimeError, MqttError):
+                logging.exception(f"Failed to send {action.value} command to printer")
+                await _ephemeral("Failed to send command to printer.")
+                return
+
+            # Post non-ephemeral audit trail message
+            action_name = _ACTION_NAMES.get(action, action.value.capitalize())
+            channel = job.slack_channel or body["channel"]["id"]
+            thread = job.slack_thread_ts or parent_ts
+            try:
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread,
+                    text=f"{action_name} requested by <@{user_id}>",
+                )
+            except Exception:
+                logging.exception("Failed to post audit trail message")
 
         return handle_action
 
