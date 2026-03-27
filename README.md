@@ -5,7 +5,7 @@ A simple service to monitor Bambu printers on the local network and deliver prin
 
 On start, Souzu listens for Bambu printer advertisements on the local network. For each printer, if it has a corresponding access code in its config file, it tries to monitor the MQTT stream from the printer.
 
-Souzu never sends any commands to the printer, not even to poll for full status reports. This means that the load on the printer should be minimal.
+Souzu does not poll for status reports — it relies on the printer's own MQTT telemetry stream, keeping the load on the printer minimal. It can also send pause, resume, and cancel commands via Slack action buttons.
 
 ## Configuration
 
