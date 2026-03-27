@@ -13,12 +13,6 @@ from souzu.job_tracking import (
     available_actions,
 )
 
-_ACTION_COMMANDS: dict[JobAction, str] = {
-    JobAction.PAUSE: "pause",
-    JobAction.RESUME: "resume",
-    JobAction.CANCEL: "stop",
-}
-
 _ACTION_NAMES: dict[JobAction, str] = {
     JobAction.PAUSE: "Pause",
     JobAction.RESUME: "Resume",
