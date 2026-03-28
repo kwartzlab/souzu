@@ -40,7 +40,7 @@ Concrete implementation for P1/A1 printers. Constructor takes `ip_address: str` 
    - Bytes 4-7: `0x00003000` (little-endian) — packet type
    - Bytes 8-15: zero padding
    - Bytes 16-47: username `bblp` null-padded to 32 bytes
-   - Bytes 48-63: access code null-padded to 32 bytes
+   - Bytes 48-63: access code null-padded to 16 bytes
 3. Read frames in a loop:
    - 16-byte header: first 4 bytes are payload size (little-endian)
    - Payload: a complete JPEG image (starts with `FF D8`, ends with `FF D9`)

@@ -76,6 +76,7 @@ class TestP1CaptureFrame:
 
         assert result == _FAKE_JPEG
         mock_writer.write.assert_called_once()
+        mock_writer.drain.assert_awaited_once()
         mock_writer.close.assert_called_once()
 
     @pytest.mark.asyncio
