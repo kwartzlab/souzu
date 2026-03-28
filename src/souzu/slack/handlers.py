@@ -135,9 +135,36 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 await _ephemeral("Sorry, this isn't your print.")
                 return
 
-            # Photo remains a stub
+            # Photo: capture and upload a camera snapshot
             if action == JobAction.PHOTO:
-                await _ephemeral("Sorry, this isn't implemented yet, but stay tuned!")
+                camera = state.camera_client()
+                if camera is None:
+                    await _ephemeral(
+                        "Couldn't capture a photo — the camera may be unavailable."
+                    )
+                    return
+
+                try:
+                    jpeg_data = await camera.capture_frame()
+                except Exception:
+                    logging.exception("Failed to capture camera frame")
+                    await _ephemeral(
+                        "Couldn't capture a photo — the camera may be unavailable."
+                    )
+                    return
+
+                try:
+                    channel = job.slack_channel or body["channel"]["id"]
+                    thread = job.slack_thread_ts or parent_ts
+                    await client.files_upload_v2(
+                        channel=channel,
+                        thread_ts=thread,
+                        content=jpeg_data,
+                        filename="snapshot.jpg",
+                    )
+                except Exception:
+                    logging.exception("Failed to upload camera snapshot to Slack")
+                    await _ephemeral("Captured a photo but failed to upload it.")
                 return
 
             # Dispatch MQTT command

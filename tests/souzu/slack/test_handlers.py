@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from souzu.bambu.mqtt import BambuMqttConnection
 from souzu.job_tracking import JobRegistry, JobState, PrinterState, PrintJob
@@ -329,15 +330,52 @@ class TestActionHandlers:
         mock_client.chat_postMessage.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_photo_stays_as_stub(
+    async def test_photo_captures_and_uploads(
         self,
         job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+        mocker: MockerFixture,
     ) -> None:
-        """Photo action returns the stub message."""
-        registry, thread_ts, _mock_conn = job_registry_with_job
+        """Photo action captures a frame and uploads it to the thread."""
+        registry, thread_ts, mock_conn = job_registry_with_job
         state = registry[thread_ts]
         assert state.current_job is not None
         state.current_job.owner = "U_OWNER"
+
+        mock_camera = AsyncMock()
+        mock_camera.capture_frame.return_value = b"\xff\xd8fake_jpeg\xff\xd9"
+        mocker.patch.object(PrinterState, "camera_client", return_value=mock_camera)
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_OWNER")
+
+        await handlers["print_photo"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_camera.capture_frame.assert_awaited_once()
+        mock_client.files_upload_v2.assert_awaited_once()
+        upload_kwargs = mock_client.files_upload_v2.call_args.kwargs
+        assert upload_kwargs["channel"] == "C456"
+        assert upload_kwargs["thread_ts"] == thread_ts
+        assert upload_kwargs["filename"] == "snapshot.jpg"
+        assert upload_kwargs["content"] == b"\xff\xd8fake_jpeg\xff\xd9"
+        mock_client.chat_postEphemeral.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_photo_camera_unavailable(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+        mocker: MockerFixture,
+    ) -> None:
+        """Photo with no camera client sends ephemeral error."""
+        registry, thread_ts, mock_conn = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.owner = "U_OWNER"
+
+        mocker.patch.object(PrinterState, "camera_client", return_value=None)
 
         _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
         register_job_handlers(mock_slack, registry)
@@ -349,9 +387,37 @@ class TestActionHandlers:
         await handlers["print_photo"](ack=mock_ack, body=body, client=mock_client)
 
         mock_client.chat_postEphemeral.assert_awaited_once()
-        assert (
-            "implemented yet" in mock_client.chat_postEphemeral.call_args.kwargs["text"]
-        )
+        assert "unavailable" in mock_client.chat_postEphemeral.call_args.kwargs["text"]
+        mock_client.files_upload_v2.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_photo_capture_error(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+        mocker: MockerFixture,
+    ) -> None:
+        """Photo capture failure sends ephemeral error."""
+        registry, thread_ts, mock_conn = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.owner = "U_OWNER"
+
+        mock_camera = AsyncMock()
+        mock_camera.capture_frame.side_effect = TimeoutError("timed out")
+        mocker.patch.object(PrinterState, "camera_client", return_value=mock_camera)
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_OWNER")
+
+        await handlers["print_photo"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_client.chat_postEphemeral.assert_awaited_once()
+        assert "unavailable" in mock_client.chat_postEphemeral.call_args.kwargs["text"]
+        mock_client.files_upload_v2.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_unauthorized_rejection(
