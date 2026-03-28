@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import ssl
 import struct
 from typing import Protocol, runtime_checkable
 
@@ -16,8 +18,8 @@ class CameraClient(Protocol):
 class P1CameraClient:
     """Camera client for P1/A1-series printers using the port 6000 TLS protocol."""
 
-    CAMERA_PORT = 6000
-    TIMEOUT_SECONDS = 10
+    CAMERA_PORT: int = 6000
+    TIMEOUT_SECONDS: float = 10
 
     def __init__(self, ip_address: str, access_code: str) -> None:
         self._ip_address = ip_address
@@ -32,5 +34,35 @@ class P1CameraClient:
         return header + padding + username + access_code
 
     async def capture_frame(self) -> bytes:
-        """Capture a single JPEG frame from the printer's camera."""
-        raise NotImplementedError("Will be implemented in the next task")
+        """Capture a single JPEG frame from the printer's camera.
+
+        Opens a TLS connection to the printer's camera port, sends the
+        authentication packet, reads one complete JPEG frame, and returns it.
+
+        Raises:
+            TimeoutError: If the operation exceeds TIMEOUT_SECONDS.
+            ConnectionError: If the printer is unreachable.
+            ssl.SSLError: If TLS negotiation fails.
+        """
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        async with asyncio.timeout(self.TIMEOUT_SECONDS):
+            reader, writer = await asyncio.open_connection(
+                host=self._ip_address,
+                port=self.CAMERA_PORT,
+                ssl=ssl_ctx,
+            )
+            try:
+                writer.write(self._build_auth_packet())
+                await writer.drain()
+
+                # Read one frame: 16-byte header followed by JPEG payload
+                header = await reader.readexactly(16)
+                payload_size = struct.unpack_from("<I", header, 0)[0]
+                jpeg_data = await reader.readexactly(payload_size)
+                return jpeg_data
+            finally:
+                writer.close()
+                await writer.wait_closed()
