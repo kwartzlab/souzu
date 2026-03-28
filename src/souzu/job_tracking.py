@@ -13,6 +13,7 @@ from cattrs.gen import make_dict_unstructure_fn
 from cattrs.gen import override as cattrs_override
 from xdg_base_dirs import xdg_state_home
 
+from souzu.bambu.camera import CameraClient, P1CameraClient
 from souzu.bambu.discovery import BambuDevice
 from souzu.bambu.errors import CANCELLED_ERROR_CODES, parse_error_code
 from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
@@ -93,6 +94,15 @@ def available_actions(job: PrintJob | None) -> list[JobAction]:
 class PrinterState:
     current_job: PrintJob | None = None
     connection: BambuMqttConnection | None = None
+
+    def camera_client(self) -> CameraClient | None:
+        """Construct a camera client for this printer, or None if unavailable."""
+        if self.connection is None:
+            return None
+        return P1CameraClient(
+            ip_address=self.connection.device.ip_address,
+            access_code=self.connection.access_code,
+        )
 
 
 _STATE_SERIALIZER.register_unstructure_hook(

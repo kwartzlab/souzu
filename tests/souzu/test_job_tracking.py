@@ -9,8 +9,9 @@ import pytest
 import pytz
 from pytest_mock import MockerFixture
 
+from souzu.bambu.camera import P1CameraClient
 from souzu.bambu.discovery import BambuDevice
-from souzu.bambu.mqtt import BambuStatusReport
+from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
 from souzu.job_tracking import (
     JobAction,
     JobState,
@@ -904,3 +905,30 @@ async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
     call_kwargs = mock_slack.post_to_thread.call_args.kwargs
     assert "blocks" in call_kwargs
     assert call_kwargs["blocks"][0]["type"] == "actions"
+
+
+class TestPrinterStateCameraClient:
+    def _make_device(self) -> BambuDevice:
+        return BambuDevice(
+            device_id="SERIAL123",
+            device_name="Test Printer",
+            ip_address="192.168.1.100",
+            filename_prefix="test",
+        )
+
+    def test_returns_p1_camera_client_when_connection_exists(
+        self,
+    ) -> None:
+        device = self._make_device()
+        mock_conn = MagicMock(spec=BambuMqttConnection)
+        mock_conn.device = device
+        mock_conn.access_code = "12345678"
+        state = PrinterState(connection=mock_conn)
+
+        client = state.camera_client()
+
+        assert isinstance(client, P1CameraClient)
+
+    def test_returns_none_when_no_connection(self) -> None:
+        state = PrinterState(connection=None)
+        assert state.camera_client() is None
