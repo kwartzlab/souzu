@@ -81,7 +81,7 @@ class PrintJob:
 
 def available_actions(job: PrintJob | None) -> list[JobAction]:
     """Return the valid actions for a job's current state."""
-    if job is None:
+    if job is None or job.owner is None:
         return []
     if job.state == JobState.RUNNING:
         return [JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO]
@@ -261,6 +261,20 @@ def _build_status_blocks(text: str, owner: str | None) -> list[dict[str, Any]]:
                 ],
             }
         )
+    else:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Claim"},
+                        "action_id": "claim_print",
+                        "style": "primary",
+                    },
+                ],
+            }
+        )
     return blocks
 
 
@@ -395,26 +409,7 @@ async def _job_started(
         state=JobState.RUNNING,
         start_message=start_message,
     )
-    claim_blocks = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f":progress_bar: {start_message}",
-            },
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Claim"},
-                    "action_id": "claim_print",
-                    "style": "primary",
-                },
-            ],
-        },
-    ]
+    claim_blocks = _build_status_blocks(f":progress_bar: {start_message}", None)
     try:
         thread_ts = await slack.post_to_channel(
             CONFIG.slack.print_notification_channel,
@@ -451,6 +446,8 @@ async def _job_paused(
 ) -> None:
     assert state.current_job is not None
     error_message = parse_error_code(report.print_error) if report.print_error else None
+    state.current_job.state = JobState.PAUSED
+    state.current_job.eta = None
     await _update_job(
         slack,
         state.current_job,
@@ -460,10 +457,8 @@ async def _job_paused(
         f"Print paused\nMessage from printer: {error_message}"
         if error_message
         else "Print paused!",
-        actions=[JobAction.RESUME, JobAction.CANCEL, JobAction.PHOTO],
+        actions=available_actions(state.current_job),
     )
-    state.current_job.state = JobState.PAUSED
-    state.current_job.eta = None
 
 
 async def _job_resumed(
@@ -475,6 +470,8 @@ async def _job_resumed(
     assert state.current_job is not None and report.mc_remaining_time is not None
     remaining_duration = timedelta(minutes=report.mc_remaining_time)
     eta = datetime.now(tz=CONFIG.timezone) + remaining_duration
+    state.current_job.state = JobState.RUNNING
+    state.current_job.eta = eta
     await _update_job(
         slack,
         state.current_job,
@@ -482,10 +479,8 @@ async def _job_resumed(
         ":progress_bar:",
         f"Resumed, done around {_format_eta(eta)}",
         f"Print resumed, now done around {_format_eta(eta)}",
-        actions=[JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO],
+        actions=available_actions(state.current_job),
     )
-    state.current_job.state = JobState.RUNNING
-    state.current_job.eta = eta
 
 
 async def _job_failed(

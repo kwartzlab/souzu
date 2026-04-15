@@ -232,9 +232,11 @@ async def test_update_thread_with_thread() -> None:
     mock_slack.edit_message.assert_called_once()
     edit_args, edit_kwargs = mock_slack.edit_message.call_args
     assert edit_args == ("test-channel", "1234.5678", "Edited message")
-    # No owner → blocks should have section only, no context
+    # No owner → blocks should have section + claim button
     assert edit_kwargs["blocks"][0]["type"] == "section"
-    assert len(edit_kwargs["blocks"]) == 1
+    assert edit_kwargs["blocks"][1]["type"] == "actions"
+    assert edit_kwargs["blocks"][1]["elements"][0]["action_id"] == "claim_print"
+    assert len(edit_kwargs["blocks"]) == 2
 
     mock_slack.post_to_thread.assert_called_once_with(
         "test-channel",
@@ -774,19 +776,29 @@ def test_job_action_enum() -> None:
 
 
 def test_available_actions_running() -> None:
-    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING, owner="U123")
     actions = available_actions(job)
     assert actions == [JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO]
 
 
 def test_available_actions_paused() -> None:
-    job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED)
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED, owner="U123")
     actions = available_actions(job)
     assert actions == [JobAction.RESUME, JobAction.CANCEL, JobAction.PHOTO]
 
 
 def test_available_actions_none() -> None:
     assert available_actions(None) == []
+
+
+def test_available_actions_unclaimed() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
+    assert available_actions(job) == []
+
+
+def test_available_actions_unclaimed_paused() -> None:
+    job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED)
+    assert available_actions(job) == []
 
 
 def test_print_job_actions_ts_default() -> None:
@@ -873,8 +885,8 @@ def test_printer_state_connection_excluded_from_serialization() -> None:
 
 
 @pytest.mark.asyncio
-async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
-    """Test that _job_started posts an actions message after the parent message."""
+async def test_job_started_no_actions_for_unclaimed(mocker: MockerFixture) -> None:
+    """Test that _job_started does not post an actions message for unclaimed jobs."""
     mock_config = mocker.patch("souzu.job_tracking.CONFIG")
     mock_config.slack.print_notification_channel = "C_PRINTS"
     mock_config.timezone = pytz.UTC
@@ -883,9 +895,7 @@ async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
     )
 
     mock_slack = AsyncMock(spec=SlackClient)
-    # First post_to_channel returns parent ts, then post_to_thread returns actions ts
     mock_slack.post_to_channel.return_value = "1111.0001"
-    mock_slack.post_to_thread.return_value = "1111.0002"
 
     report = MagicMock(spec=BambuStatusReport)
     report.mc_remaining_time = 60
@@ -898,13 +908,8 @@ async def test_job_started_posts_actions_message(mocker: MockerFixture) -> None:
     await _job_started(mock_slack, report, state, device, job_registry)
 
     assert state.current_job is not None
-    assert state.current_job.actions_ts == "1111.0002"
-
-    # Verify actions message was posted in thread
-    mock_slack.post_to_thread.assert_called_once()
-    call_kwargs = mock_slack.post_to_thread.call_args.kwargs
-    assert "blocks" in call_kwargs
-    assert call_kwargs["blocks"][0]["type"] == "actions"
+    assert state.current_job.actions_ts is None
+    mock_slack.post_to_thread.assert_not_called()
 
 
 class TestPrinterStateCameraClient:

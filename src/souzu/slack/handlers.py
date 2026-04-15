@@ -11,6 +11,7 @@ from souzu.job_tracking import (
     PrinterState,
     PrintJob,
     available_actions,
+    build_actions_blocks,
 )
 
 _ACTION_NAMES: dict[JobAction, str] = {
@@ -79,6 +80,31 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
             text=message_text,
             blocks=claimed_blocks,
         )
+
+        # Update the actions message now that the job is claimed
+        actions = available_actions(job)
+        if actions and job.actions_ts is not None:
+            action_blocks = build_actions_blocks(actions)
+            try:
+                await client.chat_update(
+                    channel=channel_id,
+                    ts=job.actions_ts,
+                    text="Actions",
+                    blocks=action_blocks,
+                )
+            except Exception:
+                logging.warning("Failed to update actions message after claim")
+        elif actions:
+            try:
+                actions_ts = await client.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=thread_ts,
+                    text="Actions",
+                    blocks=build_actions_blocks(actions),
+                )
+                job.actions_ts = actions_ts.get("ts")
+            except Exception:
+                logging.warning("Failed to post actions message after claim")
 
         # Post in-thread so the claimant gets notified of replies
         await client.chat_postMessage(

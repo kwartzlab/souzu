@@ -92,19 +92,30 @@ class TestClaimHandler:
         assert job is not None
         assert job.owner == "U999"
         mock_client.chat_postEphemeral.assert_not_awaited()
-        mock_client.chat_update.assert_awaited_once()
-        update_kwargs = mock_client.chat_update.call_args.kwargs
-        assert update_kwargs["channel"] == "C456"
-        assert update_kwargs["ts"] == thread_ts
+        # Parent message updated with claim info
+        parent_update = mock_client.chat_update.call_args_list[0]
+        assert parent_update.kwargs["channel"] == "C456"
+        assert parent_update.kwargs["ts"] == thread_ts
         assert any(
-            "Claimed by <@U999>" in str(block) for block in update_kwargs["blocks"]
+            "Claimed by <@U999>" in str(block)
+            for block in parent_update.kwargs["blocks"]
         )
-        # Verify in-thread @mention for notification
-        mock_client.chat_postMessage.assert_awaited_once()
-        post_kwargs = mock_client.chat_postMessage.call_args.kwargs
-        assert post_kwargs["channel"] == "C456"
-        assert post_kwargs["thread_ts"] == thread_ts
-        assert "<@U999>" in post_kwargs["text"]
+
+        # Actions message posted and in-thread notification
+        post_calls = mock_client.chat_postMessage.call_args_list
+        assert len(post_calls) == 2
+        # First call: actions message with control buttons
+        actions_kwargs = post_calls[0].kwargs
+        assert actions_kwargs["channel"] == "C456"
+        assert actions_kwargs["thread_ts"] == thread_ts
+        assert actions_kwargs["blocks"][0]["type"] == "actions"
+        # Verify actions_ts was stored on the job
+        assert job.actions_ts is not None
+        # Second call: in-thread @mention for notification
+        notify_kwargs = post_calls[1].kwargs
+        assert notify_kwargs["channel"] == "C456"
+        assert notify_kwargs["thread_ts"] == thread_ts
+        assert "<@U999>" in notify_kwargs["text"]
 
     @pytest.mark.asyncio
     async def test_rejects_second_claimant(
