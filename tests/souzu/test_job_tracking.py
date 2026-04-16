@@ -269,6 +269,36 @@ async def test_update_thread_preserves_owner_in_blocks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_thread_terminal_unclaimed_shows_nobody_claimed() -> None:
+    """Test that terminal updates on unclaimed jobs show 'Nobody claimed' context."""
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="test-channel",
+        slack_thread_ts="1234.5678",
+    )
+
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    await _update_thread(
+        mock_slack,
+        job,
+        device,
+        "Edited message",
+        "Update message",
+        terminal_reason="print completed",
+    )
+
+    edit_kwargs = mock_slack.edit_message.call_args.kwargs
+    assert len(edit_kwargs["blocks"]) == 2
+    assert edit_kwargs["blocks"][1]["type"] == "context"
+    assert "Nobody claimed this print" in str(edit_kwargs["blocks"][1])
+    assert ":cry:" in str(edit_kwargs["blocks"][1])
+
+
+@pytest.mark.asyncio
 async def test_update_thread_slack_error_edit(mocker: MockerFixture) -> None:
     """Test handling Slack API errors in _update_thread during edit_message."""
     job = PrintJob(

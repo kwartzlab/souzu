@@ -244,7 +244,9 @@ def build_terminal_actions_blocks(reason: str) -> list[dict[str, Any]]:
     ]
 
 
-def _build_status_blocks(text: str, owner: str | None) -> list[dict[str, Any]]:
+def _build_status_blocks(
+    text: str, owner: str | None, *, terminal: bool = False
+) -> list[dict[str, Any]]:
     """Build Block Kit blocks for a status message, preserving claim info."""
     blocks: list[dict[str, Any]] = [
         {
@@ -258,6 +260,15 @@ def _build_status_blocks(text: str, owner: str | None) -> list[dict[str, Any]]:
                 "type": "context",
                 "elements": [
                     {"type": "mrkdwn", "text": f"Claimed by <@{owner}>"},
+                ],
+            }
+        )
+    elif terminal:
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": ":cry: Nobody claimed this print"},
                 ],
             }
         )
@@ -315,7 +326,9 @@ async def _update_thread(
             except SlackApiError as e:
                 logging.error(f"Failed to notify channel as fallback: {e}")
     try:
-        blocks = _build_status_blocks(edited_message, job.owner)
+        blocks = _build_status_blocks(
+            edited_message, job.owner, terminal=terminal_reason is not None
+        )
         await slack.edit_message(
             job.slack_channel or CONFIG.slack.print_notification_channel,
             job.slack_thread_ts,
