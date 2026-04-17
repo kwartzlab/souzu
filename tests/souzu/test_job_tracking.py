@@ -1089,3 +1089,67 @@ class TestShouldAdopt:
         prev = self._make_previous(duration=timedelta(0))
         now = prev.ended_at + timedelta(minutes=1)
         assert _should_adopt(prev, timedelta(hours=1), now) is False
+
+
+class TestBuildPreviousJobInfo:
+    def test_returns_info_for_unclaimed_job_with_thread(self) -> None:
+        from souzu.job_tracking import _build_previous_job_info
+
+        ended_at = datetime(2026, 4, 16, 12, 0, 0)
+        job = PrintJob(
+            duration=timedelta(hours=2),
+            slack_channel="C_PRINTS",
+            slack_thread_ts="1111.0001",
+            actions_ts="1111.0002",
+        )
+        info = _build_previous_job_info(job, ended_at)
+        assert info is not None
+        assert info.slack_channel == "C_PRINTS"
+        assert info.slack_thread_ts == "1111.0001"
+        assert info.actions_ts == "1111.0002"
+        assert info.duration == timedelta(hours=2)
+        assert info.ended_at == ended_at
+
+    def test_returns_none_when_owner_set(self) -> None:
+        from souzu.job_tracking import _build_previous_job_info
+
+        job = PrintJob(
+            duration=timedelta(hours=2),
+            slack_channel="C_PRINTS",
+            slack_thread_ts="1111.0001",
+            owner="U_ALICE",
+        )
+        assert _build_previous_job_info(job, datetime(2026, 4, 16, 12, 0, 0)) is None
+
+    def test_returns_none_when_no_thread_ts(self) -> None:
+        from souzu.job_tracking import _build_previous_job_info
+
+        job = PrintJob(
+            duration=timedelta(hours=2),
+            slack_channel="C_PRINTS",
+            slack_thread_ts=None,
+        )
+        assert _build_previous_job_info(job, datetime(2026, 4, 16, 12, 0, 0)) is None
+
+    def test_returns_none_when_no_channel(self) -> None:
+        from souzu.job_tracking import _build_previous_job_info
+
+        job = PrintJob(
+            duration=timedelta(hours=2),
+            slack_channel=None,
+            slack_thread_ts="1111.0001",
+        )
+        assert _build_previous_job_info(job, datetime(2026, 4, 16, 12, 0, 0)) is None
+
+    def test_actions_ts_can_be_none(self) -> None:
+        from souzu.job_tracking import _build_previous_job_info
+
+        job = PrintJob(
+            duration=timedelta(hours=2),
+            slack_channel="C_PRINTS",
+            slack_thread_ts="1111.0001",
+            actions_ts=None,
+        )
+        info = _build_previous_job_info(job, datetime(2026, 4, 16, 12, 0, 0))
+        assert info is not None
+        assert info.actions_ts is None

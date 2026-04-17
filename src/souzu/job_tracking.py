@@ -232,6 +232,26 @@ def _should_adopt(
     )
 
 
+def _build_previous_job_info(
+    job: PrintJob, ended_at: datetime
+) -> PreviousJobInfo | None:
+    """Capture adoption metadata from a job, or None if it isn't eligible.
+
+    A job is eligible only when it was unclaimed and has a Slack thread to adopt.
+    """
+    if job.owner is not None:
+        return None
+    if job.slack_channel is None or job.slack_thread_ts is None:
+        return None
+    return PreviousJobInfo(
+        slack_channel=job.slack_channel,
+        slack_thread_ts=job.slack_thread_ts,
+        actions_ts=job.actions_ts,
+        duration=job.duration,
+        ended_at=ended_at,
+    )
+
+
 _ACTION_LABELS: dict[JobAction, str] = {
     JobAction.PAUSE: "Pause",
     JobAction.RESUME: "Resume",
