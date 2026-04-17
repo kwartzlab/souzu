@@ -612,6 +612,7 @@ async def _job_completed(
         actions=[],
         terminal_reason="print completed",
     )
+    state.previous_job = None
     state.current_job = None
 
 
@@ -632,6 +633,8 @@ async def _job_tracking_lost(
         actions=[],
         terminal_reason="print tracking lost",
     )
+    ended_at = datetime.now(tz=CONFIG.timezone)
+    state.previous_job = _build_previous_job_info(state.current_job, ended_at)
     state.current_job = None
 
 
