@@ -15,6 +15,7 @@ from souzu.bambu.mqtt import BambuMqttConnection, BambuStatusReport
 from souzu.job_tracking import (
     JobAction,
     JobState,
+    PreviousJobInfo,
     PrinterState,
     PrintJob,
     _format_date_time,
@@ -1014,3 +1015,77 @@ def test_previous_job_info_excluded_from_serialization_when_none() -> None:
     json_str = json.dumps(unstructured)
     restored = _STATE_SERIALIZER.structure(json.loads(json_str), PrinterState)
     assert restored.previous_job is None
+
+
+class TestShouldAdopt:
+    def _make_previous(
+        self,
+        duration: timedelta = timedelta(hours=2),
+        ended_at: datetime | None = None,
+    ) -> "PreviousJobInfo":
+        from souzu.job_tracking import PreviousJobInfo
+
+        return PreviousJobInfo(
+            slack_channel="C_PRINTS",
+            slack_thread_ts="1111.0001",
+            actions_ts=None,
+            duration=duration,
+            ended_at=ended_at or datetime(2026, 4, 16, 12, 0, 0),
+        )
+
+    def test_adopts_within_time_and_duration_window(self) -> None:
+        from souzu.job_tracking import _should_adopt
+
+        prev = self._make_previous()
+        # 5 mins later, same duration → should adopt
+        now = prev.ended_at + timedelta(minutes=5)
+        assert _should_adopt(prev, timedelta(hours=2), now) is True
+
+    def test_rejects_when_outside_time_window(self) -> None:
+        from souzu.job_tracking import _should_adopt
+
+        prev = self._make_previous()
+        # 11 mins later → outside 10 min window
+        now = prev.ended_at + timedelta(minutes=11)
+        assert _should_adopt(prev, timedelta(hours=2), now) is False
+
+    def test_adopts_at_time_window_boundary(self) -> None:
+        from souzu.job_tracking import _should_adopt
+
+        prev = self._make_previous()
+        # Exactly 10 mins later → still within window
+        now = prev.ended_at + timedelta(minutes=10)
+        assert _should_adopt(prev, timedelta(hours=2), now) is True
+
+    def test_adopts_within_plus_ten_percent_duration(self) -> None:
+        from souzu.job_tracking import _should_adopt
+
+        prev = self._make_previous(duration=timedelta(hours=2))
+        now = prev.ended_at + timedelta(minutes=1)
+        # +10% → 2h12m
+        assert _should_adopt(prev, timedelta(hours=2, minutes=12), now) is True
+
+    def test_adopts_within_minus_ten_percent_duration(self) -> None:
+        from souzu.job_tracking import _should_adopt
+
+        prev = self._make_previous(duration=timedelta(hours=2))
+        now = prev.ended_at + timedelta(minutes=1)
+        # -10% → 1h48m
+        assert _should_adopt(prev, timedelta(hours=1, minutes=48), now) is True
+
+    def test_rejects_when_duration_more_than_ten_percent_off(self) -> None:
+        from souzu.job_tracking import _should_adopt
+
+        prev = self._make_previous(duration=timedelta(hours=2))
+        now = prev.ended_at + timedelta(minutes=1)
+        # +20% → 2h24m
+        assert _should_adopt(prev, timedelta(hours=2, minutes=24), now) is False
+        # -20% → 1h36m
+        assert _should_adopt(prev, timedelta(hours=1, minutes=36), now) is False
+
+    def test_rejects_when_previous_duration_zero(self) -> None:
+        from souzu.job_tracking import _should_adopt
+
+        prev = self._make_previous(duration=timedelta(0))
+        now = prev.ended_at + timedelta(minutes=1)
+        assert _should_adopt(prev, timedelta(hours=1), now) is False

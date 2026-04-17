@@ -27,6 +27,9 @@ _FIFTY_FIVE_MINUTES = timedelta(minutes=55)
 _ONE_HOUR = timedelta(hours=1)
 _EIGHT_HOURS = timedelta(hours=8)
 
+_ADOPTION_TIME_WINDOW = timedelta(minutes=10)
+_ADOPTION_DURATION_TOLERANCE = 0.10
+
 _TIME_FORMAT = '%I:%M %p'
 _DATE_TIME_FORMAT = '%I:%M %p on %A'
 
@@ -204,6 +207,29 @@ def _format_eta(eta: datetime) -> str:
             return _format_date_time(rounded_eta)
         else:
             return _format_time(rounded_eta)
+
+
+def _should_adopt(
+    previous: PreviousJobInfo,
+    new_duration: timedelta,
+    now: datetime,
+) -> bool:
+    """Decide whether to re-use the previous attempt's Slack thread for a new print.
+
+    Returns True only when the new attempt looks like a quick slicer-tweak retry of
+    the previous one: started within ``_ADOPTION_TIME_WINDOW`` of the previous end,
+    and with an estimated duration within ``_ADOPTION_DURATION_TOLERANCE`` of the
+    previous estimate.
+    """
+    if now - previous.ended_at > _ADOPTION_TIME_WINDOW:
+        return False
+    prev_secs = previous.duration.total_seconds()
+    if prev_secs <= 0:
+        return False
+    return (
+        abs(new_duration.total_seconds() - prev_secs)
+        <= prev_secs * _ADOPTION_DURATION_TOLERANCE
+    )
 
 
 _ACTION_LABELS: dict[JobAction, str] = {
