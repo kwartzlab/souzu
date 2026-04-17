@@ -528,25 +528,37 @@ async def _job_started(
 ) -> None:
     assert report.mc_remaining_time is not None
     duration = timedelta(minutes=report.mc_remaining_time)
-    eta = datetime.now(tz=CONFIG.timezone) + duration
+    now = datetime.now(tz=CONFIG.timezone)
+    eta = now + duration
     start_message = f"{device.device_name}: Print started, {_format_duration(duration)}, done around {_format_eta(eta)}"
+
+    previous = state.previous_job
+    state.previous_job = None  # Consumed regardless of adoption outcome
+
     job = PrintJob(
         duration=duration,
         eta=eta,
         state=JobState.RUNNING,
         start_message=start_message,
     )
-    claim_blocks = _build_status_blocks(f":progress_bar: {start_message}", None)
-    try:
-        thread_ts = await slack.post_to_channel(
-            CONFIG.slack.print_notification_channel,
-            f":progress_bar: {job.start_message}",
-            blocks=claim_blocks,
-        )
-        job.slack_channel = CONFIG.slack.print_notification_channel
-        job.slack_thread_ts = thread_ts
-    except SlackApiError as e:
-        logging.error(f"Failed to notify channel: {e}")
+
+    if previous is not None and _should_adopt(previous, duration, now):
+        job.slack_channel = previous.slack_channel
+        job.slack_thread_ts = previous.slack_thread_ts
+        job.actions_ts = previous.actions_ts
+        await _adopt_thread(slack, previous, job, device)
+    else:
+        claim_blocks = _build_status_blocks(f":progress_bar: {start_message}", None)
+        try:
+            thread_ts = await slack.post_to_channel(
+                CONFIG.slack.print_notification_channel,
+                f":progress_bar: {job.start_message}",
+                blocks=claim_blocks,
+            )
+            job.slack_channel = CONFIG.slack.print_notification_channel
+            job.slack_thread_ts = thread_ts
+        except SlackApiError as e:
+            logging.error(f"Failed to notify channel: {e}")
     state.current_job = job
     if job.slack_thread_ts is not None:
         job_registry[job.slack_thread_ts] = state

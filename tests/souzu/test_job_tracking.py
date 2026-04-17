@@ -1480,3 +1480,168 @@ async def test_adopt_thread_logs_and_continues_on_edit_error(
 
     # Should not raise; should log multiple errors
     assert mock_logging.error.call_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_job_started_adopts_when_heuristic_matches(
+    mocker: MockerFixture,
+) -> None:
+    """When previous_job matches the heuristic, _job_started adopts the thread."""
+    from souzu.job_tracking import PreviousJobInfo, _job_started
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.slack.print_notification_channel = "C_PRINTS"
+    mock_config.timezone = pytz.UTC
+    fixed_now = datetime(2026, 4, 16, 12, 5, 0, tzinfo=pytz.UTC)
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = fixed_now
+
+    mock_adopt = AsyncMock()
+    mocker.patch("souzu.job_tracking._adopt_thread", new=mock_adopt)
+
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+        duration=timedelta(hours=2),
+        ended_at=datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC),
+    )
+    state = PrinterState(previous_job=previous)
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    report = MagicMock(spec=BambuStatusReport)
+    report.mc_remaining_time = 120  # 2 hours
+    job_registry: dict[str, PrinterState] = {}
+
+    await _job_started(mock_slack, report, state, device, job_registry)
+
+    # Adoption was used — no fresh post_to_channel
+    mock_slack.post_to_channel.assert_not_called()
+    # _adopt_thread was called with the previous info
+    assert mock_adopt.call_count == 1
+    # Current job carries forward the adopted thread metadata
+    assert state.current_job is not None
+    assert state.current_job.slack_channel == "C_PRINTS"
+    assert state.current_job.slack_thread_ts == "1111.0001"
+    assert state.current_job.actions_ts == "1111.0002"
+    # previous_job is consumed
+    assert state.previous_job is None
+    # Job registry is updated
+    assert "1111.0001" in job_registry
+
+
+@pytest.mark.asyncio
+async def test_job_started_falls_back_to_fresh_when_outside_heuristic(
+    mocker: MockerFixture,
+) -> None:
+    """When previous_job exists but heuristic rejects, post a fresh thread."""
+    from souzu.job_tracking import PreviousJobInfo, _job_started
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.slack.print_notification_channel = "C_PRINTS"
+    mock_config.timezone = pytz.UTC
+    fixed_now = datetime(2026, 4, 16, 13, 0, 0, tzinfo=pytz.UTC)  # 1h after end
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = fixed_now
+
+    mock_adopt = AsyncMock()
+    mocker.patch("souzu.job_tracking._adopt_thread", new=mock_adopt)
+
+    mock_slack = AsyncMock(spec=SlackClient)
+    mock_slack.post_to_channel.return_value = "fresh.thread.ts"
+
+    previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+        duration=timedelta(hours=2),
+        ended_at=datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC),
+    )
+    state = PrinterState(previous_job=previous)
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    report = MagicMock(spec=BambuStatusReport)
+    report.mc_remaining_time = 120
+    job_registry: dict[str, PrinterState] = {}
+
+    await _job_started(mock_slack, report, state, device, job_registry)
+
+    # Fresh thread used; adoption not called
+    mock_adopt.assert_not_called()
+    mock_slack.post_to_channel.assert_called_once()
+    # previous_job is still consumed
+    assert state.previous_job is None
+    # Current job has the new thread ts
+    assert state.current_job is not None
+    assert state.current_job.slack_thread_ts == "fresh.thread.ts"
+
+
+@pytest.mark.asyncio
+async def test_job_started_consumes_previous_job_even_when_no_adoption(
+    mocker: MockerFixture,
+) -> None:
+    """Confirm previous_job is cleared when heuristic mismatches (duration)."""
+    from souzu.job_tracking import PreviousJobInfo, _job_started
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.slack.print_notification_channel = "C_PRINTS"
+    mock_config.timezone = pytz.UTC
+    fixed_now = datetime(2026, 4, 16, 12, 5, 0, tzinfo=pytz.UTC)
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = fixed_now
+
+    mocker.patch("souzu.job_tracking._adopt_thread", new=AsyncMock())
+
+    mock_slack = AsyncMock(spec=SlackClient)
+    mock_slack.post_to_channel.return_value = "fresh.thread.ts"
+
+    previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+        duration=timedelta(hours=2),  # 120 mins
+        ended_at=datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC),
+    )
+    state = PrinterState(previous_job=previous)
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    report = MagicMock(spec=BambuStatusReport)
+    report.mc_remaining_time = 60  # 50% of previous → mismatch
+    job_registry: dict[str, PrinterState] = {}
+
+    await _job_started(mock_slack, report, state, device, job_registry)
+
+    assert state.previous_job is None
+
+
+@pytest.mark.asyncio
+async def test_job_started_with_no_previous_job_uses_fresh_thread(
+    mocker: MockerFixture,
+) -> None:
+    """Existing fresh-thread behavior is preserved when no previous_job exists."""
+    from souzu.job_tracking import _job_started
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.slack.print_notification_channel = "C_PRINTS"
+    mock_config.timezone = pytz.UTC
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = datetime(
+        2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC
+    )
+
+    mock_adopt = AsyncMock()
+    mocker.patch("souzu.job_tracking._adopt_thread", new=mock_adopt)
+
+    mock_slack = AsyncMock(spec=SlackClient)
+    mock_slack.post_to_channel.return_value = "1234.5678"
+
+    state = PrinterState()
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    report = MagicMock(spec=BambuStatusReport)
+    report.mc_remaining_time = 60
+
+    await _job_started(mock_slack, report, state, device, {})
+
+    mock_adopt.assert_not_called()
+    mock_slack.post_to_channel.assert_called_once()
+    assert state.current_job is not None
+    assert state.current_job.slack_thread_ts == "1234.5678"
