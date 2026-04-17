@@ -1520,6 +1520,11 @@ async def test_job_started_adopts_when_heuristic_matches(
     mock_slack.post_to_channel.assert_not_called()
     # _adopt_thread was called with the previous info
     assert mock_adopt.call_count == 1
+    call = mock_adopt.call_args
+    assert call.args[0] is mock_slack
+    assert call.args[1] is previous
+    assert call.args[2] is state.current_job
+    assert call.args[3] is device
     # Current job carries forward the adopted thread metadata
     assert state.current_job is not None
     assert state.current_job.slack_channel == "C_PRINTS"
