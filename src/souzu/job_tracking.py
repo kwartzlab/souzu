@@ -91,8 +91,24 @@ def available_actions(job: PrintJob | None) -> list[JobAction]:
 
 
 @define
+class PreviousJobInfo:
+    """Adoption metadata captured when an unclaimed print ends in cancel/tracking-lost.
+
+    Used by ``_job_started`` to decide whether to re-use the previous attempt's
+    Slack thread instead of starting a new one.
+    """
+
+    slack_channel: str
+    slack_thread_ts: str
+    actions_ts: str | None
+    duration: timedelta
+    ended_at: datetime
+
+
+@define
 class PrinterState:
     current_job: PrintJob | None = None
+    previous_job: PreviousJobInfo | None = None
     connection: BambuMqttConnection | None = None
 
     def camera_client(self) -> CameraClient | None:

@@ -967,3 +967,50 @@ class TestPrinterStateCameraClient:
     def test_returns_none_when_no_connection(self) -> None:
         state = PrinterState(connection=None)
         assert state.camera_client() is None
+
+
+def test_previous_job_info_serialization_round_trip() -> None:
+    """Test round-trip serialization of PrinterState with previous_job populated."""
+    import json
+
+    from souzu.job_tracking import _STATE_SERIALIZER, PreviousJobInfo
+
+    previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+        duration=timedelta(hours=2, minutes=15),
+        ended_at=datetime(2026, 4, 16, 12, 30, 0),
+    )
+    state = PrinterState(current_job=None, previous_job=previous)
+
+    unstructured = _STATE_SERIALIZER.unstructure(state)
+    json_str = json.dumps(unstructured)
+    json_loaded = json.loads(json_str)
+    restructured = _STATE_SERIALIZER.structure(json_loaded, PrinterState)
+
+    assert restructured.previous_job is not None
+    assert restructured.previous_job.slack_channel == previous.slack_channel
+    assert restructured.previous_job.slack_thread_ts == previous.slack_thread_ts
+    assert restructured.previous_job.actions_ts == previous.actions_ts
+    assert restructured.previous_job.duration == previous.duration
+    assert restructured.previous_job.ended_at == previous.ended_at
+
+
+def test_previous_job_info_default_none() -> None:
+    """PrinterState.previous_job defaults to None."""
+    state = PrinterState()
+    assert state.previous_job is None
+
+
+def test_previous_job_info_excluded_from_serialization_when_none() -> None:
+    """When previous_job is None, round-trip preserves it as None."""
+    import json
+
+    from souzu.job_tracking import _STATE_SERIALIZER
+
+    state = PrinterState()
+    unstructured = _STATE_SERIALIZER.unstructure(state)
+    json_str = json.dumps(unstructured)
+    restored = _STATE_SERIALIZER.structure(json.loads(json_str), PrinterState)
+    assert restored.previous_job is None
