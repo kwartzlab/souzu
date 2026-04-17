@@ -1650,3 +1650,70 @@ async def test_job_started_with_no_previous_job_uses_fresh_thread(
     mock_slack.post_to_channel.assert_called_once()
     assert state.current_job is not None
     assert state.current_job.slack_thread_ts == "1234.5678"
+
+
+@pytest.mark.asyncio
+async def test_cancel_then_restart_within_window_adopts_thread(
+    mocker: MockerFixture,
+) -> None:
+    """Integration: a cancelled unclaimed print followed by a similar restart adopts."""
+    from souzu.job_tracking import _job_failed, _job_started
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.slack.print_notification_channel = "C_PRINTS"
+    mock_config.timezone = pytz.UTC
+
+    cancel_time = datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC)
+    restart_time = datetime(2026, 4, 16, 12, 3, 0, tzinfo=pytz.UTC)
+    fake_dt = mocker.patch("souzu.job_tracking.datetime")
+    fake_dt.now.return_value = cancel_time
+
+    mocker.patch(
+        "souzu.job_tracking.CANCELLED_ERROR_CODES",
+        new={0x12345678},
+    )
+    mocker.patch("souzu.job_tracking._update_job", new=AsyncMock())
+
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    # Existing unclaimed job to be cancelled
+    existing_job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+    )
+    state = PrinterState(current_job=existing_job)
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+
+    cancel_report = MagicMock(spec=BambuStatusReport)
+    cancel_report.print_error = 0x12345678
+    await _job_failed(mock_slack, cancel_report, state, device)
+
+    assert state.previous_job is not None
+    assert state.previous_job.slack_thread_ts == "1111.0001"
+
+    # Advance the clock to the restart time
+    fake_dt.now.return_value = restart_time
+
+    # Now a new print starts at the same printer with the same estimated duration
+    start_report = MagicMock(spec=BambuStatusReport)
+    start_report.mc_remaining_time = 120  # 2 hours, matches previous
+    job_registry: dict[str, PrinterState] = {}
+
+    await _job_started(mock_slack, start_report, state, device, job_registry)
+
+    # No fresh post_to_channel — we adopted
+    mock_slack.post_to_channel.assert_not_called()
+    # Top-level message edited (parent + actions = 2 edits)
+    assert mock_slack.edit_message.call_count == 2
+    parent_edit = mock_slack.edit_message.call_args_list[0]
+    assert parent_edit.args[1] == "1111.0001"
+    # Restart reply posted in-thread
+    post_calls = mock_slack.post_to_thread.call_args_list
+    assert any(":repeat:" in str(c.args[2]) for c in post_calls if len(c.args) >= 3)
+
+    assert state.current_job is not None
+    assert state.current_job.slack_thread_ts == "1111.0001"
+    assert state.previous_job is None
