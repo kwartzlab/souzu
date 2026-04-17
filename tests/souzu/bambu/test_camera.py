@@ -23,16 +23,16 @@ def _make_frame_payload(jpeg_data: bytes) -> bytes:
 
 
 class TestP1AuthPacket:
-    def test_auth_packet_is_64_bytes(self) -> None:
+    def test_auth_packet_is_80_bytes(self) -> None:
         client = P1CameraClient(ip_address="192.168.1.100", access_code="12345678")
         packet = client._build_auth_packet()
-        assert len(packet) == 64
+        assert len(packet) == 80
 
     def test_auth_packet_header(self) -> None:
         client = P1CameraClient(ip_address="192.168.1.100", access_code="12345678")
         packet = client._build_auth_packet()
-        size, ptype = struct.unpack_from("<II", packet, 0)
-        assert size == 0x40
+        magic, ptype = struct.unpack_from("<II", packet, 0)
+        assert magic == 0x40
         assert ptype == 0x3000
 
     def test_auth_packet_zero_padding(self) -> None:
@@ -49,8 +49,8 @@ class TestP1AuthPacket:
     def test_auth_packet_access_code(self) -> None:
         client = P1CameraClient(ip_address="192.168.1.100", access_code="12345678")
         packet = client._build_auth_packet()
-        code = packet[48:64]
-        assert code == b"12345678" + b"\x00" * 8
+        code = packet[48:80]
+        assert code == b"12345678" + b"\x00" * 24
 
 
 class TestP1CaptureFrame:

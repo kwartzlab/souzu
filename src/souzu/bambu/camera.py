@@ -26,11 +26,16 @@ class P1CameraClient:
         self._access_code = access_code
 
     def _build_auth_packet(self) -> bytes:
-        """Build the 64-byte authentication packet for the camera stream."""
+        """Build the 80-byte authentication packet for the camera stream.
+
+        The leading 0x40 is a magic/type marker, not a length — the actual
+        packet is 80 bytes with the access code field padded to 32 bytes, per
+        the community-reverse-engineered protocol.
+        """
         header = struct.pack("<II", 0x40, 0x3000)
         padding = b"\x00" * 8
         username = b"bblp".ljust(32, b"\x00")
-        access_code = self._access_code.encode().ljust(16, b"\x00")
+        access_code = self._access_code.encode().ljust(32, b"\x00")
         return header + padding + username + access_code
 
     async def capture_frame(self) -> bytes:
