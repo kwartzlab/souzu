@@ -1153,3 +1153,114 @@ class TestBuildPreviousJobInfo:
         info = _build_previous_job_info(job, datetime(2026, 4, 16, 12, 0, 0))
         assert info is not None
         assert info.actions_ts is None
+
+
+@pytest.mark.asyncio
+async def test_job_failed_cancel_sets_previous_job(mocker: MockerFixture) -> None:
+    """A cancel on an unclaimed job populates state.previous_job."""
+    from souzu.job_tracking import _job_failed
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.timezone = pytz.UTC
+    fixed_now = datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC)
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = fixed_now
+    mocker.patch("souzu.job_tracking._update_job", new=AsyncMock())
+    mocker.patch(
+        "souzu.job_tracking.CANCELLED_ERROR_CODES",
+        new={0x12345678},
+    )
+
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+    )
+    state = PrinterState(current_job=job)
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    report = MagicMock(spec=BambuStatusReport)
+    report.print_error = 0x12345678
+
+    await _job_failed(AsyncMock(spec=SlackClient), report, state, device)
+
+    assert state.current_job is None
+    assert state.previous_job is not None
+    assert state.previous_job.slack_thread_ts == "1111.0001"
+    assert state.previous_job.actions_ts == "1111.0002"
+    assert state.previous_job.duration == timedelta(hours=2)
+    assert state.previous_job.ended_at == fixed_now
+
+
+@pytest.mark.asyncio
+async def test_job_failed_cancel_does_not_set_previous_job_when_claimed(
+    mocker: MockerFixture,
+) -> None:
+    """A cancel on a claimed job leaves previous_job as None."""
+    from souzu.job_tracking import _job_failed
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.timezone = pytz.UTC
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = datetime(
+        2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC
+    )
+    mocker.patch("souzu.job_tracking._update_job", new=AsyncMock())
+    mocker.patch(
+        "souzu.job_tracking.CANCELLED_ERROR_CODES",
+        new={0x12345678},
+    )
+
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        owner="U_ALICE",
+    )
+    state = PrinterState(current_job=job)
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    report = MagicMock(spec=BambuStatusReport)
+    report.print_error = 0x12345678
+
+    await _job_failed(AsyncMock(spec=SlackClient), report, state, device)
+
+    assert state.current_job is None
+    assert state.previous_job is None
+
+
+@pytest.mark.asyncio
+async def test_job_failed_non_cancel_clears_previous_job(
+    mocker: MockerFixture,
+) -> None:
+    """A non-cancel failure explicitly clears any prior previous_job."""
+    from souzu.job_tracking import PreviousJobInfo, _job_failed
+
+    mocker.patch("souzu.job_tracking.CONFIG")
+    mocker.patch("souzu.job_tracking._update_job", new=AsyncMock())
+    mocker.patch(
+        "souzu.job_tracking.CANCELLED_ERROR_CODES",
+        new={0x12345678},
+    )
+    mocker.patch(
+        "souzu.job_tracking.parse_error_code",
+        return_value="some error",
+    )
+
+    job = PrintJob(duration=timedelta(hours=2))
+    stale_previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="9999.0001",
+        actions_ts=None,
+        duration=timedelta(hours=1),
+        ended_at=datetime(2026, 4, 16, 11, 0, 0),
+    )
+    state = PrinterState(current_job=job, previous_job=stale_previous)
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    report = MagicMock(spec=BambuStatusReport)
+    report.print_error = 0xDEADBEEF
+
+    await _job_failed(AsyncMock(spec=SlackClient), report, state, device)
+
+    assert state.current_job is None
+    assert state.previous_job is None

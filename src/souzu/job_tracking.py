@@ -576,6 +576,8 @@ async def _job_failed(
             actions=[],
             terminal_reason="print cancelled",
         )
+        ended_at = datetime.now(tz=CONFIG.timezone)
+        state.previous_job = _build_previous_job_info(state.current_job, ended_at)
         state.current_job = None
     else:
         error_message = parse_error_code(report.print_error)
@@ -589,6 +591,7 @@ async def _job_failed(
             actions=[],
             terminal_reason="print failed",
         )
+        state.previous_job = None
         state.current_job = None
 
 
