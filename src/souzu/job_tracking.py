@@ -467,6 +467,58 @@ async def _update_job(
     )
 
 
+async def _adopt_thread(
+    slack: SlackClient,
+    previous: PreviousJobInfo,
+    job: PrintJob,
+    device: BambuDevice,
+) -> None:
+    """Re-use the previous attempt's Slack thread for a new print.
+
+    Edits the top-level message to reflect the new attempt, posts a restart
+    notification as a reply, and replaces the previous attempt's terminal
+    actions placeholder with an "awaiting claim" placeholder for the new
+    attempt. The previous attempt's status replies are intentionally left in
+    place as a loose audit trail.
+    """
+    text = f":progress_bar: {job.start_message}"
+    blocks = _build_status_blocks(text, None)
+    try:
+        await slack.edit_message(
+            previous.slack_channel,
+            previous.slack_thread_ts,
+            text,
+            blocks=blocks,
+        )
+    except SlackApiError as e:
+        logging.error(f"Failed to edit adopted message: {e}")
+
+    eta_str = _format_eta(job.eta) if job.eta is not None else "unknown"
+    restart_text = (
+        f":repeat: {device.device_name}: Print restarted, "
+        f"{_format_duration(job.duration)}, done around {eta_str}"
+    )
+    try:
+        await slack.post_to_thread(
+            previous.slack_channel,
+            previous.slack_thread_ts,
+            restart_text,
+        )
+    except SlackApiError as e:
+        logging.error(f"Failed to post restart notification: {e}")
+
+    if previous.actions_ts is not None:
+        try:
+            await slack.edit_message(
+                previous.slack_channel,
+                previous.actions_ts,
+                "No actions available — awaiting claim.",
+                blocks=build_terminal_actions_blocks("awaiting claim"),
+            )
+        except SlackApiError as e:
+            logging.error(f"Failed to update actions message on adoption: {e}")
+
+
 async def _job_started(
     slack: SlackClient,
     report: BambuStatusReport,

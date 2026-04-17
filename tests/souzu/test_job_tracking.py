@@ -1352,3 +1352,131 @@ async def test_job_completed_clears_previous_job(mocker: MockerFixture) -> None:
 
     assert state.current_job is None
     assert state.previous_job is None
+
+
+@pytest.mark.asyncio
+async def test_adopt_thread_edits_top_level_message_and_posts_restart_reply(
+    mocker: MockerFixture,
+) -> None:
+    from souzu.job_tracking import PreviousJobInfo, _adopt_thread
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.timezone = pytz.UTC
+    mocker.patch("souzu.job_tracking.datetime").now.return_value = datetime(
+        2026, 4, 16, 12, 5, 0, tzinfo=pytz.UTC
+    )
+
+    previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+        duration=timedelta(hours=2),
+        ended_at=datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC),
+    )
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        eta=datetime(2026, 4, 16, 14, 5, 0, tzinfo=pytz.UTC),
+        start_message="Test Printer: Print started, 2 hours, done around 2:05 PM",
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    await _adopt_thread(mock_slack, previous, job, device)
+
+    # Top-level message edited with new start text + claim button
+    edit_calls = mock_slack.edit_message.call_args_list
+    assert len(edit_calls) == 2  # parent + actions
+    parent_edit = edit_calls[0]
+    assert parent_edit.args[0] == "C_PRINTS"
+    assert parent_edit.args[1] == "1111.0001"
+    assert ":progress_bar:" in parent_edit.args[2]
+    assert "Print started" in parent_edit.args[2]
+    parent_blocks = parent_edit.kwargs["blocks"]
+    assert any(
+        b.get("type") == "actions"
+        and any(e.get("action_id") == "claim_print" for e in b.get("elements", []))
+        for b in parent_blocks
+    )
+
+    # Restart reply posted in-thread
+    post_calls = mock_slack.post_to_thread.call_args_list
+    assert len(post_calls) == 1
+    assert post_calls[0].args[0] == "C_PRINTS"
+    assert post_calls[0].args[1] == "1111.0001"
+    assert ":repeat:" in post_calls[0].args[2]
+    assert "Test Printer" in post_calls[0].args[2]
+
+    # Actions message edited to "awaiting claim" placeholder
+    actions_edit = edit_calls[1]
+    assert actions_edit.args[1] == "1111.0002"
+    assert "awaiting claim" in str(actions_edit.kwargs.get("blocks", actions_edit.args))
+
+
+@pytest.mark.asyncio
+async def test_adopt_thread_skips_actions_edit_when_no_actions_ts(
+    mocker: MockerFixture,
+) -> None:
+    from souzu.job_tracking import PreviousJobInfo, _adopt_thread
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.timezone = pytz.UTC
+
+    previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts=None,
+        duration=timedelta(hours=2),
+        ended_at=datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC),
+    )
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        eta=datetime(2026, 4, 16, 14, 5, 0, tzinfo=pytz.UTC),
+        start_message="Test Printer: Print started, 2 hours, done around 2:05 PM",
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    mock_slack = AsyncMock(spec=SlackClient)
+
+    await _adopt_thread(mock_slack, previous, job, device)
+
+    # Only parent edit; no actions edit
+    assert mock_slack.edit_message.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_adopt_thread_logs_and_continues_on_edit_error(
+    mocker: MockerFixture,
+) -> None:
+    from souzu.job_tracking import PreviousJobInfo, _adopt_thread
+
+    mock_config = mocker.patch("souzu.job_tracking.CONFIG")
+    mock_config.timezone = pytz.UTC
+
+    previous = PreviousJobInfo(
+        slack_channel="C_PRINTS",
+        slack_thread_ts="1111.0001",
+        actions_ts="1111.0002",
+        duration=timedelta(hours=2),
+        ended_at=datetime(2026, 4, 16, 12, 0, 0, tzinfo=pytz.UTC),
+    )
+    job = PrintJob(
+        duration=timedelta(hours=2),
+        eta=datetime(2026, 4, 16, 14, 5, 0, tzinfo=pytz.UTC),
+        start_message="Test Printer: Print started, 2 hours, done around 2:05 PM",
+    )
+    device = MagicMock(spec=BambuDevice)
+    device.device_name = "Test Printer"
+    mock_slack = AsyncMock(spec=SlackClient)
+    mock_slack.edit_message.side_effect = SlackApiError("nope")
+    mock_slack.post_to_thread.side_effect = SlackApiError("nope")
+
+    mock_logging = mocker.patch("souzu.job_tracking.logging")
+
+    await _adopt_thread(mock_slack, previous, job, device)
+
+    # Should not raise; should log multiple errors
+    assert mock_logging.error.call_count >= 2
