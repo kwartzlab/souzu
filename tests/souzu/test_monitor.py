@@ -300,8 +300,15 @@ async def test_notify_startup_posts_version(mocker: MockerFixture) -> None:
 
     await notify_startup(mock_slack)
 
-    mock_slack.post_to_channel.assert_called_once_with(
-        "test-channel", "Souzu 1.2.3 started"
+    mock_slack.post_to_channel.assert_called_once()
+    args, kwargs = mock_slack.post_to_channel.call_args
+    assert args[0] == "test-channel"
+    assert args[1] == "Souzu 1.2.3 started"
+    blocks = kwargs["blocks"]
+    assert any(
+        elem.get("action_id") == "check_admin"
+        for block in blocks
+        for elem in block.get("elements", [])
     )
 
 
@@ -322,9 +329,10 @@ async def test_notify_startup_handles_unknown_version(mocker: MockerFixture) -> 
 
     await notify_startup(mock_slack)
 
-    mock_slack.post_to_channel.assert_called_once_with(
-        "test-channel", "Souzu unknown started"
-    )
+    mock_slack.post_to_channel.assert_called_once()
+    args, _kwargs = mock_slack.post_to_channel.call_args
+    assert args[0] == "test-channel"
+    assert args[1] == "Souzu unknown started"
 
 
 @pytest.mark.asyncio

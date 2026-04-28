@@ -157,6 +157,112 @@ class TestAccessTokenOnlyMode:
                 pass
         assert "degraded mode" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_is_user_in_group_true(self, mock_web_client: MagicMock) -> None:
+        mock_web_client.usergroups_list = AsyncMock(
+            return_value={
+                "ok": True,
+                "usergroups": [
+                    {"id": "S111", "handle": "other"},
+                    {"id": "S222", "handle": "3dprinterteam"},
+                ],
+            }
+        )
+        mock_web_client.usergroups_users_list = AsyncMock(
+            return_value={"ok": True, "users": ["U_ADMIN", "U_OTHER"]}
+        )
+        client = SlackClient(access_token="xoxb-test")
+        async with client:
+            result = await client.is_user_in_group("U_ADMIN", "3dprinterteam")
+        assert result is True
+        mock_web_client.usergroups_users_list.assert_awaited_once_with(usergroup="S222")
+
+    @pytest.mark.asyncio
+    async def test_is_user_in_group_false(self, mock_web_client: MagicMock) -> None:
+        mock_web_client.usergroups_list = AsyncMock(
+            return_value={
+                "ok": True,
+                "usergroups": [{"id": "S222", "handle": "3dprinterteam"}],
+            }
+        )
+        mock_web_client.usergroups_users_list = AsyncMock(
+            return_value={"ok": True, "users": ["U_OTHER"]}
+        )
+        client = SlackClient(access_token="xoxb-test")
+        async with client:
+            result = await client.is_user_in_group("U_ADMIN", "3dprinterteam")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_is_user_in_group_unknown_handle(
+        self, mock_web_client: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_web_client.usergroups_list = AsyncMock(
+            return_value={
+                "ok": True,
+                "usergroups": [{"id": "S111", "handle": "other"}],
+            }
+        )
+        mock_web_client.usergroups_users_list = AsyncMock()
+        client = SlackClient(access_token="xoxb-test")
+        async with client:
+            with caplog.at_level(logging.WARNING):
+                result = await client.is_user_in_group("U_ADMIN", "missing")
+        assert result is False
+        assert "missing" in caplog.text
+        mock_web_client.usergroups_users_list.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_is_user_in_group_list_api_error(
+        self, mock_web_client: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_web_client.usergroups_list = AsyncMock(side_effect=RuntimeError("boom"))
+        client = SlackClient(access_token="xoxb-test")
+        async with client:
+            with caplog.at_level(logging.ERROR):
+                result = await client.is_user_in_group("U_ADMIN", "3dprinterteam")
+        assert result is False
+        assert "Failed to list Slack user groups" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_is_user_in_group_list_not_ok(
+        self, mock_web_client: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_web_client.usergroups_list = AsyncMock(
+            return_value={"ok": False, "error": "missing_scope"}
+        )
+        client = SlackClient(access_token="xoxb-test")
+        async with client:
+            with caplog.at_level(logging.WARNING):
+                result = await client.is_user_in_group("U_ADMIN", "3dprinterteam")
+        assert result is False
+        assert "missing_scope" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_is_user_in_group_users_api_error(
+        self, mock_web_client: MagicMock
+    ) -> None:
+        mock_web_client.usergroups_list = AsyncMock(
+            return_value={
+                "ok": True,
+                "usergroups": [{"id": "S222", "handle": "3dprinterteam"}],
+            }
+        )
+        mock_web_client.usergroups_users_list = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        client = SlackClient(access_token="xoxb-test")
+        async with client:
+            result = await client.is_user_in_group("U_ADMIN", "3dprinterteam")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_is_user_in_group_no_token(self) -> None:
+        client = SlackClient()
+        async with client:
+            result = await client.is_user_in_group("U_ADMIN", "3dprinterteam")
+        assert result is False
+
 
 class TestFullMode:
     """Tests for SlackClient with both access_token and app_token."""

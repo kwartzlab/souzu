@@ -23,7 +23,24 @@ from souzu.config import CONFIG
 from souzu.job_tracking import JobRegistry, monitor_printer_status
 from souzu.logs import log_reports
 from souzu.slack.client import SlackClient
-from souzu.slack.handlers import register_job_handlers
+from souzu.slack.handlers import register_admin_check_handler, register_job_handlers
+
+
+def _build_startup_blocks(text: str) -> list[dict[str, object]]:
+    """Build Block Kit blocks for the startup message, including the admin probe."""
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Check admin"},
+                    "action_id": "check_admin",
+                },
+            ],
+        },
+    ]
 
 
 async def notify_startup(slack: SlackClient) -> str | None:
@@ -33,10 +50,12 @@ async def notify_startup(slack: SlackClient) -> str | None:
     except PackageNotFoundError:
         souzu_version = "unknown"
 
+    text = f"Souzu {souzu_version} started"
     try:
         return await slack.post_to_channel(
             CONFIG.slack.error_notification_channel,
-            f"Souzu {souzu_version} started",
+            text,
+            blocks=_build_startup_blocks(text),
         )
     except Exception:
         logging.exception("Failed to post startup notification")
@@ -74,6 +93,7 @@ async def monitor() -> None:
     ) as slack:
         if slack.app:
             register_job_handlers(slack, job_registry)
+            register_admin_check_handler(slack)
 
         await notify_startup(slack)
 

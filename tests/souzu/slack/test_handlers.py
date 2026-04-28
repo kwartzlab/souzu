@@ -10,7 +10,11 @@ from pytest_mock import MockerFixture
 from souzu.bambu.mqtt import BambuMqttConnection
 from souzu.job_tracking import JobRegistry, JobState, PrinterState, PrintJob
 from souzu.slack.client import SlackClient
-from souzu.slack.handlers import can_control_job, register_job_handlers
+from souzu.slack.handlers import (
+    can_control_job,
+    register_admin_check_handler,
+    register_job_handlers,
+)
 
 
 def _make_mock_app_and_slack() -> tuple[MagicMock, MagicMock, dict[str, Any]]:
@@ -528,3 +532,92 @@ class TestActionHandlers:
         assert "print_resume" in handlers
         assert "print_cancel" in handlers
         assert "print_photo" in handlers
+
+
+class TestRegisterAdminCheckHandler:
+    def test_registers_check_admin_action(self) -> None:
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_admin_check_handler(mock_slack)
+        assert "check_admin" in handlers
+
+    def test_skips_when_no_app(self) -> None:
+        mock_slack = MagicMock(spec=SlackClient)
+        mock_slack.app = None
+        # Should not raise
+        register_admin_check_handler(mock_slack)
+
+
+class TestCheckAdminHandler:
+    @pytest.mark.asyncio
+    async def test_member_replies_admin(self, mocker: MockerFixture) -> None:
+        mocker.patch(
+            "souzu.slack.handlers.CONFIG"
+        ).slack.admin_user_group = "3dprinterteam"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        mock_slack.is_user_in_group = AsyncMock(return_value=True)
+        register_admin_check_handler(mock_slack)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = {
+            "user": {"id": "U_ADMIN", "name": "admin"},
+            "channel": {"id": "C_ERR"},
+            "message": {"ts": "1111.2222"},
+        }
+
+        await handlers["check_admin"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_ack.assert_awaited_once()
+        mock_slack.is_user_in_group.assert_awaited_once_with("U_ADMIN", "3dprinterteam")
+        mock_client.chat_postMessage.assert_awaited_once()
+        kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert kwargs["channel"] == "C_ERR"
+        assert kwargs["thread_ts"] == "1111.2222"
+        assert kwargs["text"] == "<@U_ADMIN> is an admin"
+
+    @pytest.mark.asyncio
+    async def test_non_member_replies_not_admin(self, mocker: MockerFixture) -> None:
+        mocker.patch(
+            "souzu.slack.handlers.CONFIG"
+        ).slack.admin_user_group = "3dprinterteam"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        mock_slack.is_user_in_group = AsyncMock(return_value=False)
+        register_admin_check_handler(mock_slack)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = {
+            "user": {"id": "U_NORMIE", "name": "normie"},
+            "channel": {"id": "C_ERR"},
+            "message": {"ts": "1111.2222"},
+        }
+
+        await handlers["check_admin"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_client.chat_postMessage.assert_awaited_once()
+        kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert kwargs["text"] == "<@U_NORMIE> is not an admin"
+
+    @pytest.mark.asyncio
+    async def test_uses_configured_group(self, mocker: MockerFixture) -> None:
+        mocker.patch(
+            "souzu.slack.handlers.CONFIG"
+        ).slack.admin_user_group = "custom-group"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        mock_slack.is_user_in_group = AsyncMock(return_value=False)
+        register_admin_check_handler(mock_slack)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = {
+            "user": {"id": "U_X"},
+            "channel": {"id": "C_ERR"},
+            "message": {"ts": "1111.2222"},
+        }
+
+        await handlers["check_admin"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_slack.is_user_in_group.assert_awaited_once_with("U_X", "custom-group")

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiomqtt import MqttError
 
+from souzu.config import CONFIG
 from souzu.job_tracking import (
     JobAction,
     JobRegistry,
@@ -231,3 +232,36 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
 
     for action_id in [f"print_{action.value}" for action in JobAction]:
         slack.app.action(action_id)(_make_action_handler(action_id))
+
+
+def register_admin_check_handler(slack: "SlackClient") -> None:
+    """Register the check_admin button handler used on the startup notification.
+
+    Does nothing if socket mode is not available (slack.app is None).
+    """
+    if slack.app is None:
+        return
+
+    @slack.app.action("check_admin")
+    async def handle_check_admin(
+        ack: Any,  # noqa: ANN401
+        body: Any,  # noqa: ANN401
+        client: Any,  # noqa: ANN401
+    ) -> None:
+        await ack()
+
+        user_id: str = body["user"]["id"]
+        channel_id: str = body["channel"]["id"]
+        message_ts: str = body["message"]["ts"]
+
+        group_handle = CONFIG.slack.admin_user_group
+        is_admin = await slack.is_user_in_group(user_id, group_handle)
+        verb = "is" if is_admin else "is not"
+        try:
+            await client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=message_ts,
+                text=f"<@{user_id}> {verb} an admin",
+            )
+        except Exception:
+            logging.exception("Failed to post admin check result")

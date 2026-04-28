@@ -35,6 +35,7 @@ class SlackConfig:
     app_token: str | None = None
     print_notification_channel: str | None = None
     error_notification_channel: str | None = None
+    admin_user_group: str = "3dprinterteam"
 
 
 @frozen

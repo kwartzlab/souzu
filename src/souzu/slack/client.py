@@ -140,6 +140,47 @@ class SlackClient:
         )
         return response.get("ts") if response else None
 
+    async def is_user_in_group(self, user_id: str, group_handle: str) -> bool:
+        """Whether the given user is a member of the user group with the given handle.
+
+        Returns False if the client has no token, the group doesn't exist, or the
+        Slack API call fails.
+        """
+        if self._web_client is None:
+            return False
+        try:
+            groups_response = await self._web_client.usergroups_list()
+        except Exception:
+            logging.exception("Failed to list Slack user groups")
+            return False
+        if not groups_response.get("ok"):
+            logging.warning(
+                f"usergroups.list failed: {groups_response.get('error', 'unknown')}"
+            )
+            return False
+        group_id: str | None = None
+        for group in groups_response.get("usergroups", []):
+            if group.get("handle") == group_handle:
+                group_id = group.get("id")
+                break
+        if group_id is None:
+            logging.warning(f"Slack user group with handle {group_handle!r} not found")
+            return False
+        try:
+            users_response = await self._web_client.usergroups_users_list(
+                usergroup=group_id
+            )
+        except Exception:
+            logging.exception(f"Failed to list users in Slack group {group_handle!r}")
+            return False
+        if not users_response.get("ok"):
+            logging.warning(
+                f"usergroups.users.list failed: "
+                f"{users_response.get('error', 'unknown')}"
+            )
+            return False
+        return user_id in users_response.get("users", [])
+
     async def edit_message(
         self,
         channel: str | None,
