@@ -648,6 +648,53 @@ class TestActionHandlers:
         mock_client.files_upload_v2.assert_awaited_once()
         mock_client.chat_postEphemeral.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_admin_can_control_unclaimed_print(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+    ) -> None:
+        """Admin can pause an unclaimed print (intervene on a runaway)."""
+        registry, thread_ts, mock_conn = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        assert state.current_job.owner is None
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        mock_slack.is_user_in_group = AsyncMock(return_value=True)
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_ADMIN")
+
+        await handlers["print_pause"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_conn.pause.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_admin_rejected_on_unclaimed_print(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+    ) -> None:
+        """Non-admin clicking on an unclaimed print's buttons is rejected."""
+        registry, thread_ts, mock_conn = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        assert state.current_job.owner is None
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_RANDO")
+
+        await handlers["print_pause"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_conn.pause.assert_not_awaited()
+        mock_client.chat_postEphemeral.assert_awaited_once()
+
 
 class TestRegisterAdminCheckHandler:
     def test_registers_check_admin_action(self) -> None:

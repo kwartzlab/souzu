@@ -83,8 +83,14 @@ class PrintJob:
 
 
 def available_actions(job: PrintJob | None) -> list[JobAction]:
-    """Return the valid actions for a job's current state."""
-    if job is None or job.owner is None:
+    """Return the valid actions for a job's current state.
+
+    Actions depend only on print state, not ownership. Per-user permission is
+    enforced separately by ``can_control_job``: owners pass on any of their own
+    prints, and admins pass on every print (including unclaimed ones, so they
+    can intervene on a runaway nobody has claimed).
+    """
+    if job is None:
         return []
     if job.state == JobState.RUNNING:
         return [JobAction.PAUSE, JobAction.CANCEL, JobAction.PHOTO]
@@ -565,16 +571,33 @@ async def _job_started(
         actions = available_actions(job)
         if actions:
             action_blocks = build_actions_blocks(actions)
-            try:
-                actions_ts = await slack.post_to_thread(
-                    CONFIG.slack.print_notification_channel,
-                    job.slack_thread_ts,
-                    "Actions",
-                    blocks=action_blocks,
-                )
-                job.actions_ts = actions_ts
-            except SlackApiError as e:
-                logging.error(f"Failed to post actions message: {e}")
+            channel = job.slack_channel or CONFIG.slack.print_notification_channel
+            # On thread adoption, actions_ts carries forward; edit in place so
+            # we don't leave the prior "No actions available" placeholder behind.
+            if job.actions_ts is not None:
+                try:
+                    await slack.edit_message(
+                        channel,
+                        job.actions_ts,
+                        "Actions",
+                        blocks=action_blocks,
+                    )
+                except SlackApiError as e:
+                    logging.warning(
+                        f"Failed to edit actions message, posting new one: {e}"
+                    )
+                    job.actions_ts = None
+            if job.actions_ts is None:
+                try:
+                    actions_ts = await slack.post_to_thread(
+                        channel,
+                        job.slack_thread_ts,
+                        "Actions",
+                        blocks=action_blocks,
+                    )
+                    job.actions_ts = actions_ts
+                except SlackApiError as e:
+                    logging.error(f"Failed to post actions message: {e}")
 
 
 async def _job_paused(

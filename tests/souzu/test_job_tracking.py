@@ -822,14 +822,24 @@ def test_available_actions_none() -> None:
     assert available_actions(None) == []
 
 
-def test_available_actions_unclaimed() -> None:
+def test_available_actions_unclaimed_running() -> None:
+    """Unclaimed running prints expose actions so admins can intervene."""
     job = PrintJob(duration=timedelta(hours=1), state=JobState.RUNNING)
-    assert available_actions(job) == []
+    assert available_actions(job) == [
+        JobAction.PAUSE,
+        JobAction.CANCEL,
+        JobAction.PHOTO,
+    ]
 
 
 def test_available_actions_unclaimed_paused() -> None:
+    """Unclaimed paused prints expose actions so admins can intervene."""
     job = PrintJob(duration=timedelta(hours=1), state=JobState.PAUSED)
-    assert available_actions(job) == []
+    assert available_actions(job) == [
+        JobAction.RESUME,
+        JobAction.CANCEL,
+        JobAction.PHOTO,
+    ]
 
 
 def test_print_job_actions_ts_default() -> None:
@@ -916,8 +926,8 @@ def test_printer_state_connection_excluded_from_serialization() -> None:
 
 
 @pytest.mark.asyncio
-async def test_job_started_no_actions_for_unclaimed(mocker: MockerFixture) -> None:
-    """Test that _job_started does not post an actions message for unclaimed jobs."""
+async def test_job_started_posts_actions_for_unclaimed(mocker: MockerFixture) -> None:
+    """Unclaimed jobs still get an actions message so admins can intervene."""
     mock_config = mocker.patch("souzu.job_tracking.CONFIG")
     mock_config.slack.print_notification_channel = "C_PRINTS"
     mock_config.timezone = pytz.UTC
@@ -927,6 +937,7 @@ async def test_job_started_no_actions_for_unclaimed(mocker: MockerFixture) -> No
 
     mock_slack = AsyncMock(spec=SlackClient)
     mock_slack.post_to_channel.return_value = "1111.0001"
+    mock_slack.post_to_thread.return_value = "1111.0002"
 
     report = MagicMock(spec=BambuStatusReport)
     report.mc_remaining_time = 60
@@ -939,8 +950,8 @@ async def test_job_started_no_actions_for_unclaimed(mocker: MockerFixture) -> No
     await _job_started(mock_slack, report, state, device, job_registry)
 
     assert state.current_job is not None
-    assert state.current_job.actions_ts is None
-    mock_slack.post_to_thread.assert_not_called()
+    assert state.current_job.actions_ts == "1111.0002"
+    mock_slack.post_to_thread.assert_awaited_once()
 
 
 class TestPrinterStateCameraClient:
@@ -1706,8 +1717,10 @@ async def test_cancel_then_restart_within_window_adopts_thread(
 
     # No fresh post_to_channel — we adopted
     mock_slack.post_to_channel.assert_not_called()
-    # Top-level message edited (parent + actions = 2 edits)
-    assert mock_slack.edit_message.call_count == 2
+    # 3 edits: parent message; actions → "awaiting claim" (in _adopt_thread);
+    # actions → real action buttons (in _job_started, since the new running
+    # print exposes actions even before claim).
+    assert mock_slack.edit_message.call_count == 3
     parent_edit = mock_slack.edit_message.call_args_list[0]
     assert parent_edit.args[1] == "1111.0001"
     # Restart reply posted in-thread
