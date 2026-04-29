@@ -377,12 +377,12 @@ class TestActionHandlers:
         mock_client.chat_postMessage.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_photo_captures_and_uploads(
+    async def test_photo_captures_and_dms_clicker(
         self,
         job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
         mocker: MockerFixture,
     ) -> None:
-        """Photo action captures a frame and uploads it to the thread."""
+        """Photo action captures a frame and uploads it to the clicker's DM."""
         registry, thread_ts, mock_conn = job_registry_with_job
         state = registry[thread_ts]
         assert state.current_job is not None
@@ -397,15 +397,17 @@ class TestActionHandlers:
 
         mock_ack = AsyncMock()
         mock_client = AsyncMock()
+        mock_client.conversations_open.return_value = {"channel": {"id": "D_OWNER"}}
         body = _make_action_body(thread_ts, user_id="U_OWNER")
 
         await handlers["print_photo"](ack=mock_ack, body=body, client=mock_client)
 
         mock_camera.capture_frame.assert_awaited_once()
+        mock_client.conversations_open.assert_awaited_once_with(users="U_OWNER")
         mock_client.files_upload_v2.assert_awaited_once()
         upload_kwargs = mock_client.files_upload_v2.call_args.kwargs
-        assert upload_kwargs["channel"] == "C456"
-        assert upload_kwargs["thread_ts"] == thread_ts
+        assert upload_kwargs["channel"] == "D_OWNER"
+        assert "thread_ts" not in upload_kwargs
         assert upload_kwargs["filename"] == "snapshot.jpg"
         assert upload_kwargs["content"] == b"\xff\xd8fake_jpeg\xff\xd9"
         mock_client.chat_postEphemeral.assert_not_awaited()
@@ -640,12 +642,16 @@ class TestActionHandlers:
 
         mock_ack = AsyncMock()
         mock_client = AsyncMock()
+        mock_client.conversations_open.return_value = {"channel": {"id": "D_ADMIN"}}
         body = _make_action_body(thread_ts, user_id="U_ADMIN")
 
         await handlers["print_photo"](ack=mock_ack, body=body, client=mock_client)
 
         mock_camera.capture_frame.assert_awaited_once()
+        mock_client.conversations_open.assert_awaited_once_with(users="U_ADMIN")
         mock_client.files_upload_v2.assert_awaited_once()
+        upload_kwargs = mock_client.files_upload_v2.call_args.kwargs
+        assert upload_kwargs["channel"] == "D_ADMIN"
         mock_client.chat_postEphemeral.assert_not_awaited()
 
     @pytest.mark.asyncio

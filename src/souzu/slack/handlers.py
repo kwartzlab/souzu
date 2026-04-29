@@ -195,17 +195,16 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                     return
 
                 try:
-                    channel = job.slack_channel or body["channel"]["id"]
-                    thread = job.slack_thread_ts or parent_ts
+                    dm = await client.conversations_open(users=user_id)
+                    dm_channel = dm["channel"]["id"]
                     await client.files_upload_v2(
-                        channel=channel,
-                        thread_ts=thread,
+                        channel=dm_channel,
                         content=jpeg_data,
                         filename="snapshot.jpg",
                     )
                 except Exception:
-                    logging.exception("Failed to upload camera snapshot to Slack")
-                    await _ephemeral("Captured a photo but failed to upload it.")
+                    logging.exception("Failed to send camera snapshot via DM")
+                    await _ephemeral("Captured a photo but failed to send it.")
                 return
 
             # Dispatch MQTT command
