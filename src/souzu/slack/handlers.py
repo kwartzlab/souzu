@@ -25,9 +25,21 @@ if TYPE_CHECKING:
     from souzu.slack.client import SlackClient
 
 
-def can_control_job(user_id: str, job: PrintJob) -> bool:
-    """Whether this user is allowed to control this job."""
-    return job.owner is not None and job.owner == user_id
+async def can_control_job(
+    user_id: str,
+    job: PrintJob,
+    slack: "SlackClient",
+    admin_group: str,
+) -> bool:
+    """Whether this user is allowed to control this job.
+
+    Owners always pass. Members of ``admin_group`` may also control any job,
+    including unclaimed ones, so an admin can intervene when no one has claimed
+    a runaway print.
+    """
+    if job.owner is not None and job.owner == user_id:
+        return True
+    return await slack.is_user_in_group(user_id, admin_group)
 
 
 def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> None:
@@ -158,7 +170,9 @@ def register_job_handlers(slack: "SlackClient", job_registry: JobRegistry) -> No
                 await _ephemeral("This action isn't available right now.")
                 return
 
-            if not can_control_job(user_id, job):
+            if not await can_control_job(
+                user_id, job, slack, CONFIG.slack.admin_user_group
+            ):
                 await _ephemeral("Sorry, this isn't your print.")
                 return
 

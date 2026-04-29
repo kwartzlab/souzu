@@ -18,7 +18,12 @@ from souzu.slack.handlers import (
 
 
 def _make_mock_app_and_slack() -> tuple[MagicMock, MagicMock, dict[str, Any]]:
-    """Create a mock Slack client with action handler capture."""
+    """Create a mock Slack client with action handler capture.
+
+    Defaults ``is_user_in_group`` to ``False`` so admin gating doesn't
+    accidentally let unauthorized users through via the auto-AsyncMock truthy
+    default.
+    """
     mock_app = MagicMock()
     handlers: dict[str, Any] = {}
 
@@ -32,6 +37,7 @@ def _make_mock_app_and_slack() -> tuple[MagicMock, MagicMock, dict[str, Any]]:
     mock_app.action = capture_action
     mock_slack = MagicMock(spec=SlackClient)
     mock_slack.app = mock_app
+    mock_slack.is_user_in_group = AsyncMock(return_value=False)
     return mock_app, mock_slack, handlers
 
 
@@ -183,17 +189,43 @@ class TestClaimHandler:
 
 
 class TestCanControlJob:
-    def test_owner_matches(self) -> None:
+    @pytest.mark.asyncio
+    async def test_owner_matches(self) -> None:
         job = PrintJob(duration=timedelta(hours=1), owner="U_ALICE")
-        assert can_control_job("U_ALICE", job) is True
+        mock_slack = MagicMock(spec=SlackClient)
+        mock_slack.is_user_in_group = AsyncMock(return_value=False)
+        assert await can_control_job("U_ALICE", job, mock_slack, "admins") is True
+        # Owner short-circuit: admin lookup not consulted.
+        mock_slack.is_user_in_group.assert_not_awaited()
 
-    def test_owner_mismatch(self) -> None:
+    @pytest.mark.asyncio
+    async def test_owner_mismatch_non_admin(self) -> None:
         job = PrintJob(duration=timedelta(hours=1), owner="U_ALICE")
-        assert can_control_job("U_BOB", job) is False
+        mock_slack = MagicMock(spec=SlackClient)
+        mock_slack.is_user_in_group = AsyncMock(return_value=False)
+        assert await can_control_job("U_BOB", job, mock_slack, "admins") is False
+        mock_slack.is_user_in_group.assert_awaited_once_with("U_BOB", "admins")
 
-    def test_unclaimed(self) -> None:
+    @pytest.mark.asyncio
+    async def test_owner_mismatch_admin(self) -> None:
+        job = PrintJob(duration=timedelta(hours=1), owner="U_ALICE")
+        mock_slack = MagicMock(spec=SlackClient)
+        mock_slack.is_user_in_group = AsyncMock(return_value=True)
+        assert await can_control_job("U_BOB", job, mock_slack, "admins") is True
+
+    @pytest.mark.asyncio
+    async def test_unclaimed_non_admin(self) -> None:
         job = PrintJob(duration=timedelta(hours=1))
-        assert can_control_job("U_ALICE", job) is False
+        mock_slack = MagicMock(spec=SlackClient)
+        mock_slack.is_user_in_group = AsyncMock(return_value=False)
+        assert await can_control_job("U_ALICE", job, mock_slack, "admins") is False
+
+    @pytest.mark.asyncio
+    async def test_unclaimed_admin(self) -> None:
+        job = PrintJob(duration=timedelta(hours=1))
+        mock_slack = MagicMock(spec=SlackClient)
+        mock_slack.is_user_in_group = AsyncMock(return_value=True)
+        assert await can_control_job("U_ALICE", job, mock_slack, "admins") is True
 
 
 def _make_action_body(
@@ -532,6 +564,89 @@ class TestActionHandlers:
         assert "print_resume" in handlers
         assert "print_cancel" in handlers
         assert "print_photo" in handlers
+
+    @pytest.mark.asyncio
+    async def test_admin_can_pause_other_users_print(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+    ) -> None:
+        """Admin (non-owner) can pause a print claimed by someone else."""
+        registry, thread_ts, mock_conn = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.owner = "U_OWNER"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        mock_slack.is_user_in_group = AsyncMock(return_value=True)
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_ADMIN")
+
+        await handlers["print_pause"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_conn.pause.assert_awaited_once()
+        mock_client.chat_postMessage.assert_awaited_once()
+        post_kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert "Pause requested by <@U_ADMIN>" in post_kwargs["text"]
+        mock_client.chat_postEphemeral.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_admin_can_cancel_other_users_print(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+    ) -> None:
+        """Admin (non-owner) can cancel a print claimed by someone else."""
+        registry, thread_ts, mock_conn = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.owner = "U_OWNER"
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        mock_slack.is_user_in_group = AsyncMock(return_value=True)
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_ADMIN")
+
+        await handlers["print_cancel"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_conn.stop.assert_awaited_once()
+        mock_client.chat_postMessage.assert_awaited_once()
+        assert "Cancel" in mock_client.chat_postMessage.call_args.kwargs["text"]
+        mock_client.chat_postEphemeral.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_admin_can_photo_other_users_print(
+        self,
+        job_registry_with_job: tuple[JobRegistry, str, AsyncMock],
+        mocker: MockerFixture,
+    ) -> None:
+        """Admin (non-owner) can request a photo of a print claimed by someone else."""
+        registry, thread_ts, _mock_conn = job_registry_with_job
+        state = registry[thread_ts]
+        assert state.current_job is not None
+        state.current_job.owner = "U_OWNER"
+
+        mock_camera = AsyncMock()
+        mock_camera.capture_frame.return_value = b"\xff\xd8jpeg\xff\xd9"
+        mocker.patch.object(PrinterState, "camera_client", return_value=mock_camera)
+
+        _mock_app, mock_slack, handlers = _make_mock_app_and_slack()
+        mock_slack.is_user_in_group = AsyncMock(return_value=True)
+        register_job_handlers(mock_slack, registry)
+
+        mock_ack = AsyncMock()
+        mock_client = AsyncMock()
+        body = _make_action_body(thread_ts, user_id="U_ADMIN")
+
+        await handlers["print_photo"](ack=mock_ack, body=body, client=mock_client)
+
+        mock_camera.capture_frame.assert_awaited_once()
+        mock_client.files_upload_v2.assert_awaited_once()
+        mock_client.chat_postEphemeral.assert_not_awaited()
 
 
 class TestRegisterAdminCheckHandler:
