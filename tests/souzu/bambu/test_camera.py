@@ -3,6 +3,7 @@
 import asyncio
 import ssl
 import struct
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,6 +21,40 @@ def _make_frame_payload(jpeg_data: bytes) -> bytes:
     """Build a frame as the printer sends it: 16-byte header + JPEG payload."""
     header = struct.pack("<I", len(jpeg_data)) + b"\x00" * 12
     return header + jpeg_data
+
+
+def _hanging_frame_reader(frames: list[bytes]) -> AsyncMock:
+    """Return a StreamReader mock that yields the given frames then hangs.
+
+    Hanging after the last frame lets the inner DRAIN_SECONDS timeout fire
+    in capture_frame, ending the drain loop deterministically without
+    relying on side_effect lists running out (which would raise StopIteration
+    and surface as a RuntimeError).
+    """
+    reads: list[bytes] = []
+    for frame in frames:
+        encoded = _make_frame_payload(frame)
+        reads.append(encoded[:16])
+        reads.append(encoded[16:])
+    reads_iter: Iterator[bytes] = iter(reads)
+
+    async def fake_readexactly(n: int) -> bytes:
+        try:
+            return next(reads_iter)
+        except StopIteration:
+            await asyncio.sleep(999)
+            return b""  # unreachable
+
+    mock_reader = AsyncMock(spec=asyncio.StreamReader)
+    mock_reader.readexactly.side_effect = fake_readexactly
+    return mock_reader
+
+
+def _silent_writer() -> MagicMock:
+    mock_writer = MagicMock(spec=asyncio.StreamWriter)
+    mock_writer.close = MagicMock()
+    mock_writer.wait_closed = AsyncMock()
+    return mock_writer
 
 
 class TestP1AuthPacket:
@@ -55,16 +90,18 @@ class TestP1AuthPacket:
 
 class TestP1CaptureFrame:
     @pytest.mark.asyncio
-    async def test_captures_single_jpeg_frame(self, mocker: MockerFixture) -> None:
-        frame_bytes = _make_frame_payload(_FAKE_JPEG)
-        mock_reader = AsyncMock(spec=asyncio.StreamReader)
-        mock_reader.readexactly.side_effect = [
-            frame_bytes[:16],
-            frame_bytes[16:],
-        ]
-        mock_writer = MagicMock(spec=asyncio.StreamWriter)
-        mock_writer.close = MagicMock()
-        mock_writer.wait_closed = AsyncMock()
+    async def test_discards_first_frame_and_returns_second(
+        self, mocker: MockerFixture
+    ) -> None:
+        """The first frame from the camera is a stale buffered replay; the
+        second frame is the first live frame and should be returned when no
+        further frames arrive within DRAIN_SECONDS.
+        """
+        stale_frame = _JPEG_SOI + b"\x01" * 100 + _JPEG_EOI
+        live_frame = _JPEG_SOI + b"\x02" * 100 + _JPEG_EOI
+
+        mock_reader = _hanging_frame_reader([stale_frame, live_frame])
+        mock_writer = _silent_writer()
 
         mocker.patch(
             "souzu.bambu.camera.asyncio.open_connection",
@@ -72,12 +109,38 @@ class TestP1CaptureFrame:
         )
 
         client = P1CameraClient(ip_address="192.168.1.100", access_code="12345678")
+        client.DRAIN_SECONDS = 0.01
         result = await client.capture_frame()
 
-        assert result == _FAKE_JPEG
+        assert result == live_frame
         mock_writer.write.assert_called_once()
         mock_writer.drain.assert_awaited_once()
         mock_writer.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_frame_when_drain_collects_more(
+        self, mocker: MockerFixture
+    ) -> None:
+        """When extra frames keep arriving during the drain window, the
+        latest one is returned rather than the first live frame.
+        """
+        stale_frame = _JPEG_SOI + b"\x01" * 100 + _JPEG_EOI
+        mid_frame = _JPEG_SOI + b"\x02" * 100 + _JPEG_EOI
+        latest_frame = _JPEG_SOI + b"\x03" * 100 + _JPEG_EOI
+
+        mock_reader = _hanging_frame_reader([stale_frame, mid_frame, latest_frame])
+        mock_writer = _silent_writer()
+
+        mocker.patch(
+            "souzu.bambu.camera.asyncio.open_connection",
+            return_value=(mock_reader, mock_writer),
+        )
+
+        client = P1CameraClient(ip_address="192.168.1.100", access_code="12345678")
+        client.DRAIN_SECONDS = 0.05
+        result = await client.capture_frame()
+
+        assert result == latest_frame
 
     @pytest.mark.asyncio
     async def test_timeout_raises(self, mocker: MockerFixture) -> None:
@@ -109,15 +172,8 @@ class TestP1CaptureFrame:
     async def test_ssl_context_disables_verification(
         self, mocker: MockerFixture
     ) -> None:
-        frame_bytes = _make_frame_payload(_FAKE_JPEG)
-        mock_reader = AsyncMock(spec=asyncio.StreamReader)
-        mock_reader.readexactly.side_effect = [
-            frame_bytes[:16],
-            frame_bytes[16:],
-        ]
-        mock_writer = MagicMock(spec=asyncio.StreamWriter)
-        mock_writer.close = MagicMock()
-        mock_writer.wait_closed = AsyncMock()
+        mock_reader = _hanging_frame_reader([_FAKE_JPEG, _FAKE_JPEG])
+        mock_writer = _silent_writer()
 
         mock_open = mocker.patch(
             "souzu.bambu.camera.asyncio.open_connection",
@@ -125,6 +181,7 @@ class TestP1CaptureFrame:
         )
 
         client = P1CameraClient(ip_address="192.168.1.100", access_code="12345678")
+        client.DRAIN_SECONDS = 0.01
         await client.capture_frame()
 
         call_kwargs = mock_open.call_args.kwargs

@@ -20,6 +20,9 @@ class P1CameraClient:
 
     CAMERA_PORT: int = 6000
     TIMEOUT_SECONDS: float = 10
+    # P1S streams at ~0.5 FPS; 5s drain ensures we catch at least one
+    # post-discard frame even if the firmware's stale buffer is two frames deep.
+    DRAIN_SECONDS: float = 2.0
 
     def __init__(self, ip_address: str, access_code: str) -> None:
         self._ip_address = ip_address
@@ -38,14 +41,28 @@ class P1CameraClient:
         access_code = self._access_code.encode().ljust(32, b"\x00")
         return header + padding + username + access_code
 
-    async def capture_frame(self) -> bytes:
-        """Capture a single JPEG frame from the printer's camera.
+    async def _read_frame(self, reader: asyncio.StreamReader) -> bytes:
+        """Read one complete frame: 16-byte header + JPEG payload."""
+        header = await reader.readexactly(16)
+        payload_size = struct.unpack_from("<I", header, 0)[0]
+        return await reader.readexactly(payload_size)
 
-        Opens a TLS connection to the printer's camera port, sends the
-        authentication packet, reads one complete JPEG frame, and returns it.
+    async def capture_frame(self) -> bytes:
+        """Capture the most recent live JPEG frame from the printer's camera.
+
+        Opens a TLS connection, authenticates, discards the first frame, and
+        returns the next complete frame (plus any additional frames received
+        within ``DRAIN_SECONDS`` of the second frame, returning the latest).
+
+        The first frame must be discarded because the camera firmware replays
+        a stale buffered frame from the previous client session immediately
+        after authentication, before live frames begin flowing. The P1S only
+        produces frames every ~2 seconds, so a purely time-based drain isn't
+        enough — the live frame must be reached by frame count, not deadline.
 
         Raises:
-            TimeoutError: If the operation exceeds TIMEOUT_SECONDS.
+            TimeoutError: If the operation exceeds TIMEOUT_SECONDS without
+                producing two complete frames.
             ConnectionError: If the printer is unreachable.
             ssl.SSLError: If TLS negotiation fails.
         """
@@ -63,11 +80,15 @@ class P1CameraClient:
                 writer.write(self._build_auth_packet())
                 await writer.drain()
 
-                # Read one frame: 16-byte header followed by JPEG payload
-                header = await reader.readexactly(16)
-                payload_size = struct.unpack_from("<I", header, 0)[0]
-                jpeg_data = await reader.readexactly(payload_size)
-                return jpeg_data
+                await self._read_frame(reader)  # discard stale buffered frame
+                latest_jpeg = await self._read_frame(reader)
+                try:
+                    async with asyncio.timeout(self.DRAIN_SECONDS):
+                        while True:
+                            latest_jpeg = await self._read_frame(reader)
+                except TimeoutError:
+                    pass
+                return latest_jpeg
             finally:
                 writer.close()
                 await writer.wait_closed()
