@@ -19,7 +19,7 @@ class P1CameraClient:
     """Camera client for P1/A1-series printers using the port 6000 TLS protocol."""
 
     CAMERA_PORT: int = 6000
-    TIMEOUT_SECONDS: float = 10
+    TIMEOUT_SECONDS: float = 15
     # P1S streams at ~0.5 FPS; 5s drain ensures we catch at least one
     # post-discard frame even if the firmware's stale buffer is two frames deep.
     DRAIN_SECONDS: float = 2.0
