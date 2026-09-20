@@ -31,6 +31,17 @@ Put a configuration file in `~/.config/souzu.json`:
 }
 ```
 
+### Editing the config over Slack
+
+With socket mode enabled (both `access_token` and `app_token` set), members of the admin user group (`slack.admin_user_group`, default `3dprinterteam`) can manage the config with a slash command:
+
+- `/souzu config` shows the current config. Secrets are redacted.
+- `/souzu config edit` opens an editor. Leave a `<redacted>` placeholder as it is to keep that secret.
+
+A saved change is validated, the previous file is kept as `souzu.json.bak`, and the change is announced in the error notification channel. Under the systemd service, Souzu then restarts to apply it; otherwise restart it manually.
+
+This requires a `/souzu` slash command in the Slack app configuration, which adds the `commands` bot scope. Reinstall the app to the workspace after adding it.
+
 ## Installation
 
 Install [uv](https://github.com/astral-sh/uv).

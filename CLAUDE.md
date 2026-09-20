@@ -34,6 +34,12 @@ After each session working with this repository, update this file with any impor
 - `uv run coverage html` - Generate HTML coverage report (saved to htmlcov/)
 - `uv run coverage xml` - Generate XML coverage report (for CI tools)
 
+## Slack Config Command
+- `/souzu config [show|edit]` lives in `src/souzu/slack/config_handlers.py`; pure logic (redaction, validation, atomic write) is in `src/souzu/config_admin.py`
+- `CONFIG` is loaded once at import, so a config update restarts the process: the handler sets the monitor exit event and systemd (`Restart=always`) starts it again. Outside systemd (`INVOCATION_ID` unset) it does not exit
+- Bolt view submissions must `ack()` within 3 seconds; validation errors go back through `ack(response_action="errors", ...)`
+- Test harnesses capture `app.command` / `app.view` / `app.action` decorators into a dict and call the handlers directly
+
 ## Code Style Guidelines
 - Type hints required for all functions (`disallow_untyped_defs = true`)
 - Line length: 88 characters

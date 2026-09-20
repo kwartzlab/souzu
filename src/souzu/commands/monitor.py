@@ -1,4 +1,5 @@
 import logging
+import os
 import signal
 from asyncio import (
     ALL_COMPLETED,
@@ -23,6 +24,7 @@ from souzu.config import CONFIG
 from souzu.job_tracking import JobRegistry, monitor_printer_status
 from souzu.logs import log_reports
 from souzu.slack.client import SlackClient
+from souzu.slack.config_handlers import register_config_handlers
 from souzu.slack.handlers import register_admin_check_handler, register_job_handlers
 
 
@@ -91,14 +93,18 @@ async def monitor() -> None:
         access_token=CONFIG.slack.access_token,
         app_token=CONFIG.slack.app_token,
     ) as slack:
+        loop = get_running_loop()
+        exit_event = Event()
+
         if slack.app:
             register_job_handlers(slack, job_registry)
             register_admin_check_handler(slack)
+            # systemd sets INVOCATION_ID, and the unit has Restart=always, so a
+            # clean exit is sufficient to restart with the new config.
+            under_systemd = "INVOCATION_ID" in os.environ
+            register_config_handlers(slack, exit_event.set if under_systemd else None)
 
         await notify_startup(slack)
-
-        loop = get_running_loop()
-        exit_event = Event()
 
         def exit_handler(sig: int, frame: FrameType | None) -> None:
             exit_event.set()

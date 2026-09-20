@@ -6,7 +6,7 @@ from attrs import frozen
 from cattrs import Converter
 from xdg_base_dirs import xdg_config_home
 
-_CONFIG_FILE = xdg_config_home() / "souzu.json"
+CONFIG_FILE = xdg_config_home() / "souzu.json"
 
 
 def _convert_timezone(tz_str: str, _: type[ZoneInfo]) -> ZoneInfo:
@@ -20,6 +20,7 @@ def _convert_timezone(tz_str: str, _: type[ZoneInfo]) -> ZoneInfo:
 
 SERIALIZER = Converter()
 SERIALIZER.register_structure_hook(ZoneInfo, _convert_timezone)
+SERIALIZER.register_unstructure_hook(ZoneInfo, str)
 
 
 @frozen
@@ -47,7 +48,7 @@ class Config:
 
 CONFIG = Config()
 
-if _CONFIG_FILE.exists():
-    with _CONFIG_FILE.open('r') as f:
+if CONFIG_FILE.exists():
+    with CONFIG_FILE.open('r') as f:
         config_dict = json.load(f)
         CONFIG = SERIALIZER.structure(config_dict, Config)

@@ -10,3 +10,4 @@ coverage.xml
 *.py,cover
 *.log
 !/tests/assets
+/.claude/worktrees/

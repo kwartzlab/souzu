@@ -116,7 +116,7 @@ def test_printer_config() -> None:
 
 def test_slack_config() -> None:
     """Test SlackConfig initialization and attributes."""
-    access_token = "xoxb-123456789"  # noqa: S105 - Test token, not real
+    access_token = "xoxb-123456789"
     print_channel = "print-notifications"
     error_channel = "error-notifications"
 
@@ -204,7 +204,7 @@ def test_config_serialization_round_trip() -> None:
     assert restored_config.printers["printer1"].filename_prefix == "prefix1"
     assert restored_config.printers["printer1"].ip_address == "192.168.1.100"
 
-    assert restored_config.slack.access_token == "xoxb-test"  # noqa: S105 - Test token, not real
+    assert restored_config.slack.access_token == "xoxb-test"
     assert restored_config.slack.print_notification_channel == "prints"
     assert restored_config.slack.error_notification_channel == "errors"
 
@@ -216,7 +216,7 @@ def test_config_serialization_round_trip() -> None:
     assert "printer1" in json_loaded["printers"]
     assert json_loaded["printers"]["printer1"]["access_code"] == "test_code"
     assert "slack" in json_loaded
-    assert json_loaded["slack"]["access_token"] == "xoxb-test"  # noqa: S105 - Test token, not real
+    assert json_loaded["slack"]["access_token"] == "xoxb-test"
     assert "timezone" in json_loaded
     assert json_loaded["timezone"] == "Europe/London"
 
@@ -245,7 +245,7 @@ def test_config_loading_from_file() -> None:
     assert "printer1" in config.printers
     assert config.printers["printer1"].access_code == "test_code"
     assert config.printers["printer1"].filename_prefix == "prefix1"
-    assert config.slack.access_token == "xoxb-test"  # noqa: S105 - Test token, not real
+    assert config.slack.access_token == "xoxb-test"
     assert isinstance(config.timezone, ZoneInfo)
     assert str(config.timezone) == "Europe/London"
 
@@ -299,7 +299,7 @@ def test_config_file_persistence() -> None:
             )
             assert loaded_config.printers["test_printer"].ip_address == "192.168.1.200"
 
-            assert loaded_config.slack.access_token == "xoxb-testtoken"  # noqa: S105 - Test token, not real
+            assert loaded_config.slack.access_token == "xoxb-testtoken"
             assert loaded_config.slack.print_notification_channel == "test-prints"
             assert loaded_config.slack.error_notification_channel == "test-errors"
 
@@ -321,11 +321,11 @@ def test_slack_config_with_app_token() -> None:
         }
     }
     config = SERIALIZER.structure(config_dict, Config)
-    assert config.slack.app_token == "xapp-test"  # noqa: S105 - Test token, not real
-    assert config.slack.access_token == "xoxb-test"  # noqa: S105 - Test token, not real
+    assert config.slack.app_token == "xapp-test"
+    assert config.slack.access_token == "xoxb-test"
 
 
-@patch("souzu.config._CONFIG_FILE")
+@patch("souzu.config.CONFIG_FILE")
 def test_config_loading_file_not_exists(mock_config_file: MagicMock) -> None:
     """Test loading default configuration when file doesn't exist."""
     mock_config_file.exists.return_value = False

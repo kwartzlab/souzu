@@ -373,3 +373,32 @@ async def test_monitor_calls_notify_startup(mocker: MockerFixture) -> None:
     await monitor()
 
     mock_notify.assert_awaited_once_with(mock_slack_instance)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("under_systemd", [True, False])
+async def test_monitor_registers_config_handlers(
+    mocker: MockerFixture, under_systemd: bool
+) -> None:
+    """Config updates restart the process only when systemd will start it again."""
+    mock_slack_instance = AsyncMock(spec=SlackClient)
+    mock_slack_instance.app = Mock()
+    mock_slack_instance.__aenter__.return_value = mock_slack_instance
+    mocker.patch("souzu.commands.monitor.SlackClient", return_value=mock_slack_instance)
+    mocker.patch.dict(
+        "os.environ", {"INVOCATION_ID": "abc"} if under_systemd else {}, clear=True
+    )
+
+    mocker.patch("souzu.commands.monitor.register_job_handlers")
+    mocker.patch("souzu.commands.monitor.register_admin_check_handler")
+    mock_register = mocker.patch("souzu.commands.monitor.register_config_handlers")
+    mocker.patch("souzu.commands.monitor.notify_startup")
+    mocker.patch("souzu.commands.monitor.get_running_loop")
+    mock_event = mocker.patch("souzu.commands.monitor.Event")
+    mocker.patch("souzu.commands.monitor.wait", side_effect=CancelledError())
+    mocker.patch("souzu.commands.monitor.create_task")
+
+    await monitor()
+
+    expected = mock_event.return_value.set if under_systemd else None
+    mock_register.assert_called_once_with(mock_slack_instance, expected)

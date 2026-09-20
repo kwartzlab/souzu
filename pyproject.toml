@@ -119,7 +119,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S106"]
+"tests/**/*.py" = ["S105", "S106"]
 
 [dependency-groups]
 dev = [
